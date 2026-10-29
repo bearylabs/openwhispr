@@ -7,11 +7,15 @@ jobs:
   keyboard-native:
     name: Swift keyboard layout and hit-testing
     runs-on: macos-15-intel
+    strategy:
+      fail-fast: false
+      matrix:
+        commit: [fc786f41c91de8177ce7d9333d2834d973cc3c19, 188e4effdf8f7b924a513cfcd5d061fe79e62e8f]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: 188e4effd
+          ref: ${{ matrix.commit }}
           persist-credentials: false
       - name: Run native keyboard layout and hit-testing tests
         run: python3 openwhispr-mobile/plugins/keyboard-extension/tests/run-keyboard-touch-tests.py
