@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: 9f6219ecdedf8f2e3612759ca3f1d33bea421f56
+          ref: fc786f41c
           persist-credentials: false
       - name: Run native keyboard layout and hit-testing tests
         run: python3 openwhispr-mobile/plugins/keyboard-extension/tests/run-keyboard-touch-tests.py
