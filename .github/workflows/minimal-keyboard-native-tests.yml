@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        commit: [fc786f41c91de8177ce7d9333d2834d973cc3c19, 188e4effdf8f7b924a513cfcd5d061fe79e62e8f]
+        commit: [5e431e59be9d617ea50aa6068807755f4e0541c9]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
