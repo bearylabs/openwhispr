@@ -10,14 +10,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        commit: [7ba3f960e121d34385f34de1d3d25407a4bf2aec]
-    timeout-minutes: 15
+        commit: [985ed828a99f8942febda2491d0886cbc4b876eb]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ matrix.commit }}
           persist-credentials: false
       - name: Run native keyboard layout and hit-testing tests
-        run: KEYBOARD_MINIMAL_ONLY=1 python3 openwhispr-mobile/plugins/keyboard-extension/tests/run-keyboard-touch-tests.py
+        run: python3 openwhispr-mobile/plugins/keyboard-extension/tests/run-keyboard-touch-tests.py
       - name: Run keyboard capitalization tests
         run: sh openwhispr-mobile/scripts/test-keyboard-capitalization.sh
