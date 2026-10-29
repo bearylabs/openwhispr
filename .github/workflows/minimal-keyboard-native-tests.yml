@@ -1,0 +1,19 @@
+name: Minimal keyboard native tests
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  keyboard-native:
+    name: Swift keyboard layout and hit-testing
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 9f6219ecdedf8f2e3612759ca3f1d33bea421f56
+          persist-credentials: false
+      - name: Run native keyboard layout and hit-testing tests
+        run: python3 openwhispr-mobile/plugins/keyboard-extension/tests/run-keyboard-touch-tests.py
+      - name: Run keyboard capitalization tests
+        run: sh openwhispr-mobile/scripts/test-keyboard-capitalization.sh
