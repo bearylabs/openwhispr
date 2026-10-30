@@ -107,7 +107,7 @@ No diagnostic callback changes layout, forces a keyboard reload, adds padding or
 schedules a delayed sizing retry. This is instrumentation, **not a confirmed fix**.
 
 Overriding `loadView` to assign a custom view is documented UIKit behavior;
-[UIViewController.loadView](https://developer.apple.com/documentation/uikit/uiviewcontroller/loadview())
+[UIViewController.loadView](<https://developer.apple.com/documentation/uikit/uiviewcontroller/loadview()>)
 specifically says not to call `super` in that implementation. Its absence alone
 is not a root cause. Likewise, initial safe areas may be zero before attachment;
 [UIView.safeAreaInsets](https://developer.apple.com/documentation/uikit/uiview/safeareainsets)
