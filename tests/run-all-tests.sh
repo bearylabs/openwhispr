@@ -2,7 +2,7 @@
 # Can also be read/extracted with git show origin/tests:tests/run-all-tests.sh.
 set -euo pipefail
 repo=bearylabs/openwhispr
-ref=${1:-main}
+ref=${1:-integration}
 sha=$(git rev-parse --verify "${ref}^{commit}")
 # GitHub CLI cannot resolve a filename absent from the default branch; API IDs work.
 workflow_id=$(gh api "repos/$repo/actions/workflows" --paginate --jq \

@@ -17,7 +17,9 @@ def git(*args, **kwargs):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', default='main')
+    parser.add_argument('--source', default='integration')
+    parser.add_argument('--check-history', action='store_true',
+                        help='Also reject fork infrastructure in intermediate commits')
     parser.add_argument('--base', default='upstream/main')
     parser.add_argument('--create-branch', help='Create a NEW local pr/... branch; never push it')
     args = parser.parse_args()
@@ -26,6 +28,13 @@ def main():
     source = git('rev-parse', '--verify', args.source + '^{commit}')
     base = git('rev-parse', '--verify', args.base + '^{commit}')
     ancestor = git('merge-base', base, source)
+    if args.check_history:
+        # Inspect intermediate commits too: deleting fork files later does not
+        # remove them from a PR's ancestry. mobile-ci.yml is genuine upstream CI.
+        history = git('log', '--format=', '--name-only', '--full-history',
+                      base + '..' + source, '--', *FORBIDDEN[:-1]).splitlines()
+        if any(history):
+            raise SystemExit('REFUSED: fork-only infrastructure in commit history')
     names = git('diff', '--name-only', ancestor, source).splitlines()
     forbidden = [name for name in names if any(name.startswith(prefix) for prefix in FORBIDDEN)]
     if forbidden:

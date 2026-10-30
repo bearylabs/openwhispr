@@ -1,5 +1,5 @@
 name: Tests
-run-name: "Tests · ${{ inputs.source_ref || 'main' }}"
+run-name: "Tests · ${{ inputs.source_ref || 'integration' }}"
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
       source_ref:
         description: App branch or immutable commit to test (not the test infrastructure branch)
         type: string
-        default: main
+        default: integration
   push:
     branches: [tests]
 
@@ -29,7 +29,7 @@ jobs:
         id: source
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_REF: ${{ inputs.source_ref || 'main' }}
+          SOURCE_REF: ${{ inputs.source_ref || 'integration' }}
         run: |
           [[ "$SOURCE_REF" =~ ^[A-Za-z0-9._/-]+$ ]]
           sha=$(gh api "repos/bearylabs/openwhispr/commits/$SOURCE_REF" --jq .sha)

@@ -1,8 +1,32 @@
 # OpenWhispr fork tests — read this in future sessions
 
-This file exists **only on `tests`**. The app lives on `main` or feature
-branches. Never merge `tests` into an app/PR branch and never open an upstream
-PR from it. The test branch is infrastructure, not an app release.
+This file exists **only on `tests`**. Never merge `tests` into an app/PR
+branch and never open an upstream PR from it. This branch is infrastructure,
+not an app release.
+
+## Branch model (established 2026-10-30)
+
+- `main`: exact mirror of the last fetched `upstream/main`, no personal commits.
+- `feat/ios-minimal-keyboard`: clean upstream-based minimal keyboard feature,
+  including initial self-sizing and explicit fitting-height fixes (two commits).
+- `fix/mobile-uri-decoder`: independent URI security fix, based on upstream.
+- `integration`: combines those two product branches for personal builds/tests.
+  Never use it as an upstream PR source or merge it back into a feature branch.
+- `tests`: personal workflows, headless adapter, guards and this documentation.
+- `backup/main-before-upstream-sync-20261030`: preserved old main, including its
+  old fork CI history. Recovery only; never use it as a PR source.
+
+Create new topic branches from `upstream/main`, not `integration`. Merge topic
+branches into `integration` when needed. Keep tests separate and dispatch an app
+SHA. To refresh main: fetch upstream, switch to main with a clean worktree, run
+`git merge --ff-only upstream/main`, then `git push origin main`. If it diverges,
+inspect it rather than merging personal commits into main.
+
+The existing draft PR #3015 still uses the OLD remote branch
+`feat/ios-minimal-voice-keyboard`, which contains headless adaptations. It was
+not rewritten during restructuring. Use `feat/ios-minimal-keyboard` for a clean
+replacement or explicitly update the old PR branch after review. The old
+`pr-assets/ios-minimal-voice-keyboard` branch is screenshot storage, not a PR source.
 
 Suggested request to an assistant:
 
@@ -22,8 +46,8 @@ Commit and push the **app** changes first. Never test uncommitted edits by claim
 a committed SHA covers them. In `/home/hrudek/dev/openwhispr`:
 
 ```sh
-APP_SHA=$(git rev-parse main) # use your feature branch instead of main if appropriate
-git push origin main       # likewise use the actual app branch
+APP_SHA=$(git rev-parse integration) # or the exact feature branch to validate
+git push origin integration         # push the same app branch
 # Select the infrastructure branch explicitly; never merge it into the app.
 WORKFLOW_ID=$(gh api repos/bearylabs/openwhispr/actions/workflows --paginate --jq '.workflows[] | select(.path == ".github/workflows/tests.yml") | .id')
 gh workflow run "$WORKFLOW_ID" --repo bearylabs/openwhispr --ref tests -f source_ref="$APP_SHA"
@@ -46,7 +70,7 @@ resolves the workflow ID and verifies that the app commit is available on GitHub
 
 GitHub can require a one-time confirmation
 on its Actions page; changing API permissions alone did not clear that fork gate.
-A push to **tests** also tests the then-current `main` automatically. App
+A push to **tests** also tests the then-current `integration` automatically. App
 pushes do **not** automatically invoke this branch's workflow: dispatch explicitly
 with the command above. Do not confuse a green old run with validation of a new SHA.
 The resolve job records one immutable app SHA for every job and the separate test
@@ -83,8 +107,9 @@ copy. It must not be copied into app source just to accommodate this runner.
 `git apply --check` is deliberate: if source changes invalidate the adapter, fix
 and review the adapter **here**, never skip assertions to make a run green.
 
-The adapter's changes were removed from `main` by `2032c7534`; history was not
-rewritten. Real sizing code and genuine regression coverage remain in app source.
+The adapter's changes were removed in the old app revision `2032c7534`.
+The new feature branches preserve its clean product diff without the old fork CI
+history. Real sizing code and genuine regression coverage remain in app source.
 To run the adapter on a Mac:
 
 ```sh
@@ -95,34 +120,42 @@ python3 /path/to/test-branch/tests/run-keyboard-tests.py /path/to/app-checkout
 
 A local pre-push guard is installed for this checkout. To install it on another
 checkout, run `bash tests/install-guard.sh` from this branch. It refuses to
-overwrite another hook manager. It blocks test-branch contents/headless markers
-on pushes to fork `main`, `pr/*` and the upstream repository; ordinary pushes to
-`tests` are allowed. It reads the exporter from `origin/tests`, so fetch
-that ref before using the guard in a fresh clone. This is local enforcement, not
-a GitHub repository rule; `--no-verify`, another clone or the web UI can bypass it.
+overwrite another hook manager. It blocks direct upstream pushes, requires fork
+`main` to equal the fetched `upstream/main`, and checks all other app branches
+(including `feat/*`) for known headless markers and fork infrastructure in their
+net diff AND intermediate history. `tests`, `backup/*` and `pr-assets/*` are
+explicitly exempt infrastructure/recovery/storage branches, never PR sources.
+It reads the exporter from `origin/tests`, so fetch that ref first. This is local
+enforcement, not a GitHub repository rule; `--no-verify`, another clone or the web
+UI can bypass it. The guard cannot judge product scope or unknown adaptations.
 
-**Never PR `tests` or fork `main` directly.** Even though the app's net diff
-has been cleaned, its history still contains yesterday's fork-only CI commits.
-Export a new PR branch from the current upstream base instead:
+Use the clean topic branches for upstream PRs. Inspect both diff and commits:
+
+```sh
+git log --oneline upstream/main..feat/ios-minimal-keyboard
+git diff upstream/main...feat/ios-minimal-keyboard
+```
+
+For recovery from a mixed historical source ONLY, export a clean net diff:
 
 ```sh
 git fetch upstream main
 # Read/review or extract the helper from the test branch; no need to merge it:
 git show origin/tests:tests/export-upstream.py > /tmp/openwhispr-export-upstream.py
-python3 /tmp/openwhispr-export-upstream.py --source main
-# After reviewing the printed file list and actual diff:
-python3 /tmp/openwhispr-export-upstream.py --source main --create-branch pr/ios-keyboard-sizing
-git diff upstream/main...pr/ios-keyboard-sizing --stat
-git diff upstream/main...pr/ios-keyboard-sizing
+python3 /tmp/openwhispr-export-upstream.py --source backup/main-before-upstream-sync-20261030
+# After reviewing product scope (this backup includes keyboard AND URI fix):
+python3 /tmp/openwhispr-export-upstream.py --source backup/main-before-upstream-sync-20261030 --create-branch pr/recovered-app
+git diff upstream/main...pr/recovered-app --stat
+git diff upstream/main...pr/recovered-app
 ```
 
 The helper rejects test-branch files, the fork-only workflow and known headless
 adaptations. It applies only the app's net patch onto `upstream/main` using a
 **temporary index**, creates one local commit with upstream as its parent, and
 never pushes, switches your checkout, overwrites a branch or rewrites history.
-Conflicts or adapter markers fail closed. Review product scope too: the current
-app diff contains the optional minimal keyboard, sizing fix and URI security fix;
-split these into separate PRs if desired before exporting. This is a guard, not a
+Conflicts or adapter markers fail closed. The clean branches already separate
+the keyboard work from the URI security fix; do not export integration as one PR.
+This is a guard, not a
 server-side guarantee: a manually pushed branch/PR can bypass it. Always inspect
 the final PR diff and commit list. Native/UI tests do not prove a PR is clean.
 
@@ -162,6 +195,7 @@ python3 -m unittest discover -s tests/tests -v
 python3 tests/run-keyboard-tests.py . --check-only
 ```
 
-Local branch cleanup on 2026-10-30 kept `main` and `tests`. Old helper/backup
-branches are recoverable from `.git/branch-cleanup-20261030.bundle`; no remote
-branches were deleted.
+Before restructuring, old main and tests were additionally saved in
+`.git/before-upstream-sync-20261030.bundle`. The remote backup branch preserves
+old main as well. Earlier deleted helper branches remain recoverable from
+`.git/branch-cleanup-20261030.bundle`; old remote branches were not deleted.

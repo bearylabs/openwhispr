@@ -4,25 +4,30 @@
 set -euo pipefail
 remote=${1:?}
 url=${2:?}
-protected_remote=false
 case "$url" in
-  *github.com/OpenWhispr/openwhispr*) protected_remote=true ;;
+  *github.com[:/][Oo]pen[Ww]hispr/openwhispr*)
+    echo 'REFUSED: push to your fork, then open an upstream PR; direct upstream pushes are disabled.' >&2
+    exit 1 ;;
 esac
 while read -r local_ref local_sha remote_ref remote_sha; do
   [[ "$local_sha" != 0000000000000000000000000000000000000000 ]] || continue
-  guarded=false
-  if [[ "$protected_remote" == true || "$remote_ref" == refs/heads/main || "$remote_ref" == refs/heads/pr/* ]]; then
-    guarded=true
-  fi
-  [[ "$guarded" == true ]] || continue
+  case "$remote_ref" in
+    refs/heads/tests|refs/heads/backup/*|refs/heads/pr-assets/*) continue ;;
+    refs/heads/main)
+      if [[ "$local_sha" != "$(git rev-parse upstream/main)" ]]; then
+        echo 'REFUSED: fork main must equal the fetched upstream/main.' >&2
+        exit 1
+      fi
+      continue ;;
+  esac
   if git show "$local_sha:tests/README.md" >/dev/null 2>&1; then
-    echo 'REFUSED: tests infrastructure must not be pushed to main or an upstream/PR branch.' >&2
+    echo 'REFUSED: tests infrastructure must not be pushed to an app/PR branch.' >&2
     exit 1
   fi
   guard=$(mktemp)
   trap 'rm -f "$guard"' EXIT
   git show origin/tests:tests/export-upstream.py > "$guard"
-  python3 "$guard" --source "$local_sha"
+  python3 "$guard" --source "$local_sha" --check-history
   rm -f "$guard"
   trap - EXIT
 done
