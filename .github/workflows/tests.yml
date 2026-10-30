@@ -1,5 +1,5 @@
-name: Fork tests
-run-name: "Fork tests · ${{ inputs.source_ref || 'main' }}"
+name: Tests
+run-name: "Tests · ${{ inputs.source_ref || 'main' }}"
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ on:
         type: string
         default: main
   push:
-    branches: [fork-tests]
+    branches: [tests]
 
 permissions:
   contents: read
@@ -46,12 +46,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - run: python3 -m unittest discover -s fork-tests/tests -v
+      - run: python3 -m unittest discover -s tests/tests -v
       - name: App main must contain no fork-only infrastructure
         run: |
           git fetch --no-tags origin main
           git fetch --no-tags https://github.com/OpenWhispr/openwhispr.git main:refs/remotes/upstream/main
-          python3 fork-tests/export-upstream.py --source origin/main
+          python3 tests/export-upstream.py --source origin/main
 
   mobile:
     name: Mobile ${{ matrix.check }}
@@ -131,7 +131,7 @@ jobs:
         run: sh source/openwhispr-mobile/modules/live-activity/tests/run-resolver-tests.sh
       - name: Keyboard layout and hit testing (temporary headless adapter)
         if: ${{ !cancelled() }}
-        run: python3 control/fork-tests/run-keyboard-tests.py source
+        run: python3 control/tests/run-keyboard-tests.py source
       - name: Keyboard capitalization
         if: ${{ !cancelled() }}
         run: sh source/openwhispr-mobile/scripts/test-keyboard-capitalization.sh

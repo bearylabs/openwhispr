@@ -1,19 +1,19 @@
 # OpenWhispr fork tests — read this in future sessions
 
-This file exists **only on `fork-tests`**. The app lives on `main` or feature
-branches. Never merge `fork-tests` into an app/PR branch and never open an upstream
+This file exists **only on `tests`**. The app lives on `main` or feature
+branches. Never merge `tests` into an app/PR branch and never open an upstream
 PR from it. The test branch is infrastructure, not an app release.
 
 Suggested request to an assistant:
 
-> Read `fork-tests:fork-tests/README.md`, then run all mobile/native tests for my
+> Read `tests:tests/README.md`, then run all mobile/native tests for my
 > current committed app revision. Keep fork-only adaptations out of the app.
 
 ## Read without switching branches
 
 ```sh
-git fetch origin fork-tests
-git show origin/fork-tests:fork-tests/README.md
+git fetch origin tests
+git show origin/tests:tests/README.md
 ```
 
 ## Run everything (Linux machine, no local Mac needed)
@@ -25,9 +25,9 @@ a committed SHA covers them. In `/home/hrudek/dev/openwhispr`:
 APP_SHA=$(git rev-parse main) # use your feature branch instead of main if appropriate
 git push origin main       # likewise use the actual app branch
 # Select the infrastructure branch explicitly; never merge it into the app.
-WORKFLOW_ID=$(gh api repos/bearylabs/openwhispr/actions/workflows --paginate --jq '.workflows[] | select(.path == ".github/workflows/fork-tests.yml") | .id')
-gh workflow run "$WORKFLOW_ID" --repo bearylabs/openwhispr --ref fork-tests -f source_ref="$APP_SHA"
-gh run list --repo bearylabs/openwhispr --branch fork-tests --limit 5
+WORKFLOW_ID=$(gh api repos/bearylabs/openwhispr/actions/workflows --paginate --jq '.workflows[] | select(.path == ".github/workflows/tests.yml") | .id')
+gh workflow run "$WORKFLOW_ID" --repo bearylabs/openwhispr --ref tests -f source_ref="$APP_SHA"
+gh run list --repo bearylabs/openwhispr --branch tests --limit 5
 gh run watch RUN_ID --repo bearylabs/openwhispr --exit-status
 gh run view RUN_ID --repo bearylabs/openwhispr --log-failed
 ```
@@ -35,18 +35,18 @@ gh run view RUN_ID --repo bearylabs/openwhispr --log-failed
 Actions must remain enabled in the fork. The original `mobile-ci.yml` workflow is
 disabled **in the fork's GitHub settings only**, since its unadapted headless tests
 would otherwise fail on app pushes. Its source file stays identical to upstream;
-`fork-tests.yml` replaces it for fork development and runs the same mobile suites
+`tests.yml` replaces it for fork development and runs the same mobile suites
 plus the isolated adapter. Do not disable all repository Actions.
 
-The numeric workflow ID is intentional: `gh workflow run fork-tests.yml` tries to
+The numeric workflow ID is intentional: `gh workflow run tests.yml` tries to
 look up that file on the default branch and returns 404, whereas dispatch by ID
-with `--ref fork-tests` works. The currently registered ID is `401750843`.
-Alternatively, extract/run `fork-tests/run-all-tests.sh APP_BRANCH_OR_SHA`; it
+with `--ref tests` works. Resolve the current ID with the command above.
+Alternatively, extract/run `tests/run-all-tests.sh APP_BRANCH_OR_SHA`; it
 resolves the workflow ID and verifies that the app commit is available on GitHub.
 
 GitHub can require a one-time confirmation
 on its Actions page; changing API permissions alone did not clear that fork gate.
-A push to **fork-tests** also tests the then-current `main` automatically. App
+A push to **tests** also tests the then-current `main` automatically. App
 pushes do **not** automatically invoke this branch's workflow: dispatch explicitly
 with the command above. Do not confuse a green old run with validation of a new SHA.
 The resolve job records one immutable app SHA for every job and the separate test
@@ -88,27 +88,27 @@ rewritten. Real sizing code and genuine regression coverage remain in app source
 To run the adapter on a Mac:
 
 ```sh
-python3 /path/to/test-branch/fork-tests/run-keyboard-tests.py /path/to/app-checkout
+python3 /path/to/test-branch/tests/run-keyboard-tests.py /path/to/app-checkout
 ```
 
 ## Upstream PR safety
 
 A local pre-push guard is installed for this checkout. To install it on another
-checkout, run `bash fork-tests/install-guard.sh` from this branch. It refuses to
+checkout, run `bash tests/install-guard.sh` from this branch. It refuses to
 overwrite another hook manager. It blocks test-branch contents/headless markers
 on pushes to fork `main`, `pr/*` and the upstream repository; ordinary pushes to
-`fork-tests` are allowed. It reads the exporter from `origin/fork-tests`, so fetch
+`tests` are allowed. It reads the exporter from `origin/tests`, so fetch
 that ref before using the guard in a fresh clone. This is local enforcement, not
 a GitHub repository rule; `--no-verify`, another clone or the web UI can bypass it.
 
-**Never PR `fork-tests` or fork `main` directly.** Even though the app's net diff
+**Never PR `tests` or fork `main` directly.** Even though the app's net diff
 has been cleaned, its history still contains yesterday's fork-only CI commits.
 Export a new PR branch from the current upstream base instead:
 
 ```sh
 git fetch upstream main
 # Read/review or extract the helper from the test branch; no need to merge it:
-git show origin/fork-tests:fork-tests/export-upstream.py > /tmp/openwhispr-export-upstream.py
+git show origin/tests:tests/export-upstream.py > /tmp/openwhispr-export-upstream.py
 python3 /tmp/openwhispr-export-upstream.py --source main
 # After reviewing the printed file list and actual diff:
 python3 /tmp/openwhispr-export-upstream.py --source main --create-branch pr/ios-keyboard-sizing
@@ -152,16 +152,16 @@ keyboards and portrait/landscape: Catalyst cannot verify iOS's system glass.
 
 ## Maintenance
 
-Keep the adapter and workflow on `fork-tests`. Do not merge app branches into it
+Keep the adapter and workflow on `tests`. Do not merge app branches into it
 just to test newer code: dispatch the new SHA. For maintenance, switch branches
-only with a clean worktree, edit the test infrastructure and push `fork-tests`.
+only with a clean worktree, edit the test infrastructure and push `tests`.
 Infrastructure checks run with:
 
 ```sh
-python3 -m unittest discover -s fork-tests/tests -v
-python3 fork-tests/run-keyboard-tests.py . --check-only
+python3 -m unittest discover -s tests/tests -v
+python3 tests/run-keyboard-tests.py . --check-only
 ```
 
-Local branch cleanup on 2026-10-30 kept `main` and `fork-tests`. Old helper/backup
+Local branch cleanup on 2026-10-30 kept `main` and `tests`. Old helper/backup
 branches are recoverable from `.git/branch-cleanup-20261030.bundle`; no remote
 branches were deleted.

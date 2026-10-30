@@ -8,7 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = Path('openwhispr-mobile/plugins/keyboard-extension')
-RUNNER = ROOT / 'fork-tests/run-keyboard-tests.py'
+RUNNER = ROOT / 'tests/run-keyboard-tests.py'
 
 
 def fingerprint(root):
@@ -34,7 +34,7 @@ class AdapterTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
 
     def test_patch_touches_only_reviewed_keyboard_harness_files(self):
-        patch = (ROOT / 'fork-tests/headless-keyboard.patch').read_text()
+        patch = (ROOT / 'tests/headless-keyboard.patch').read_text()
         paths = [line.split(' b/', 1)[1] for line in patch.splitlines()
                  if line.startswith('diff --git ')]
         self.assertEqual(set(paths), {

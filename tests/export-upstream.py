@@ -6,8 +6,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-FORBIDDEN = ('fork-tests/', '.github/workflows/minimal-keyboard-native-tests.yml',
-             '.github/workflows/fork-tests.yml', '.github/workflows/mobile-ci.yml')
+FORBIDDEN = ('tests/', 'fork-tests/', '.github/workflows/minimal-keyboard-native-tests.yml',
+             '.github/workflows/tests.yml', '.github/workflows/fork-tests.yml',
+             '.github/workflows/mobile-ci.yml')
 
 
 def git(*args, **kwargs):

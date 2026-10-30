@@ -17,7 +17,7 @@ def main():
     relative = Path('openwhispr-mobile/plugins/keyboard-extension')
     patch = Path(__file__).with_name('headless-keyboard.patch')
     # Copy only this self-contained native harness. Never patch the app checkout.
-    with tempfile.TemporaryDirectory(prefix='openwhispr-fork-tests-') as directory:
+    with tempfile.TemporaryDirectory(prefix='openwhispr-tests-') as directory:
         root = Path(directory)
         plugin = root / relative
         shutil.copytree(source / relative, plugin)
