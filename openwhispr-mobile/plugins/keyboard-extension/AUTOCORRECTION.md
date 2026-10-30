@@ -9,7 +9,7 @@ is no longer shipped. Full Access is not needed for correction; dictation still 
 The host field's `.autocorrectionType == .no` and all safety exclusions remain respected.
 
 Context checks remain strict even with the expanded candidate rules below. If a host
-reports stale/missing context, or the German dictionary offers no eligible replacement,
+reports stale/missing left context, or the German dictionary offers no eligible replacement,
 the prototype deliberately inserts an ordinary space. A lack of correction on a device
 still needs host/dictionary investigation; changing the default alone does not prove a fix.
 
@@ -47,10 +47,31 @@ replaceable independently of the controller. It tracks expected host context aft
 inserts, not just the word. Before any replacement the controller freshly reads **both**
 sides of the cursor, selection, field traits and document UUID, and requires an exact
 match to the expected context. After querying the checker it reads all of them again,
-immediately before deletion. Any missing, delayed, truncated or contradictory context
-abandons the correction and inserts an ordinary space. Context is reconciled on text
-reports and invalidated on selection callbacks, keyboard appearances/disappearances,
-keyboard switches, other insertions and deleting. Conservative false negatives are intended.
+immediately before deletion. Missing left context in a nonempty field, delayed, truncated
+or contradictory context abandons the correction and inserts an ordinary space.
+
+UIKit can return either `nil` or an empty string on the right at end-of-document;
+these empty boundary representations (and nil/empty no-selection reports) compare as
+equivalent, rather than globally disabling correction. Nonempty right context still
+must match exactly. A `nil` left context seeds
+tracking as empty only when the proxy explicitly reports `hasText == false`, the right
+side has no text, there is no selection and the field passes all safety gates. It never
+authorizes a replacement by itself: the complete self-typed word must subsequently be
+reported on the left before any deletion.
+
+Will-change callbacks suspend replacement. Did-change callbacks retain the pending word
+or undo only if the newly reported context exactly matches the expected own insertion.
+Mismatches invalidate it. A space/backspace before the completion report fails closed,
+even if a stale read looks correct. Actual cursor moves, selections and field switches
+therefore still discard tracking; mere acknowledgements of our own insert do not.
+Keyboard appearances/disappearances, keyboard switches, other insertions and deleting
+invalidate state as before. Conservative false negatives are intended.
+
+Diagnostic OSLog entries contain only fixed reasons, booleans and proposal counts, never
+words, surrounding text, proposals, document UUIDs or other text content. The controller
+reports gates/tracking at manual space, and the provider reports dictionary availability,
+misspelling rejection or whether there is a unique eligible proposal. These help locate
+future device-only blockers without recording what the user typed.
 
 Direct backspace after correction deletes the corrected word **and its space**, restoring
 the original without a space. It needs the same document and exact freshly rechecked
@@ -81,7 +102,8 @@ npm test -- --runInBand
 
 Jest automatically runs the Foundation-only Swift tests if `swiftc` is available and
 explicitly skips that test otherwise. The Swift tests cover conservative decisions,
-ambiguity, excluded tokens, Unicode, context invalidation, delayed reports and undo.
+ambiguity, excluded tokens, Unicode, context invalidation, delayed reports, nil document
+boundaries, matching own-change acknowledgements, pending-change blocking and undo.
 The existing Catalyst controller regression suite now also covers default-on behavior
 (including an obsolete disabled preference), removal of the space long-press menu, correction,
 undo, recorrection suppression, double space, silent hosts, cursor changes, field guards,
@@ -105,6 +127,7 @@ A native rebuild is required; a JS-only update is insufficient.
 
 - Node **24.22.1**, `npm ci --ignore-scripts --no-audit --no-fund`; lockfiles unchanged.
 - `npm test -- --runInBand`: **326 suites passed; 4,332 tests passed, 1 Swift test skipped**.
+  This Jest count does not demonstrate native rule/controller execution on Linux.
 - `npm run typecheck`: passed.
 - `npm run lint`: no errors, 177 existing warnings outside the changed files.
 - `npm run format` and `git diff --check`: passed.

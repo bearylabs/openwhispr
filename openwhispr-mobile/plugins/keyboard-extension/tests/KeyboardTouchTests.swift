@@ -61,7 +61,11 @@ private final class TestTextProxy: NSObject, UITextDocumentProxy {
   func unmarkText() {}
   func insertText(_ text: String) {
     inserted.append(text)
-    if reportsOwnEdits { documentContextBeforeInput = (documentContextBeforeInput ?? "") + text }
+    if reportsOwnEdits {
+      documentContextBeforeInput = (documentContextBeforeInput ?? "") + text
+      if documentContextAfterInput == nil { documentContextAfterInput = "" }
+      hasText = true
+    }
   }
   func deleteBackward() {
     if reportsOwnEdits { documentContextBeforeInput = documentContextBeforeInput.map { String($0.dropLast()) } }
@@ -140,13 +144,18 @@ private extension KeyboardViewController {
   func touchTestInsertTranscript(_ text: String) { insertSmartText(text) }
   func touchTestTapLetter(_ index: Int) { handleCharacterKeyTapped(characterButtons[index]) }
   func touchTestSetProvider(_ provider: KeyboardCorrectionProvider) { correctionProvider = provider }
-  func touchTestTypeWord(_ word: String) {
+  func touchTestTypeWord(_ word: String, hostCallbacks: Bool = false) {
     isShiftEnabled = false
     for character in word {
       let key = KeyButton(type: .system)
       key.output = String(character)
       handleCharacterKeyTapped(key)
+      if hostCallbacks {
+        textWillChange(nil)
+        selectionWillChange(nil)
+      }
       textDidChange(nil)
+      if hostCallbacks { selectionDidChange(nil) }
     }
   }
   var touchTestSpaceHasLongPress: Bool {
@@ -521,6 +530,17 @@ private enum KeyboardTouchTests {
     checks.check("double space still makes period", TestEnvironment.proxy.documentContextBeforeInput == "nciht. ")
 
     controller = keyboard()
+    TestEnvironment.proxy.documentContextBeforeInput = nil
+    TestEnvironment.proxy.documentContextAfterInput = nil
+    controller.touchTestTypeWord("nciht", hostCallbacks: true)
+    controller.touchTestTapSpace()
+    checks.check("realistic nil boundaries and own callbacks correct", TestEnvironment.proxy.documentContextBeforeInput == "nicht ")
+    controller.textWillChange(nil)
+    controller.textDidChange(nil)
+    controller.touchTestTapDelete()
+    checks.check("own callbacks preserve safe undo", TestEnvironment.proxy.documentContextBeforeInput == "nciht")
+
+    controller = keyboard()
     controller.touchTestTypeWord("nich")
     controller.touchTestTapSpace()
     checks.check("missing letter correction", TestEnvironment.proxy.documentContextBeforeInput == "nicht ")
@@ -537,9 +557,12 @@ private enum KeyboardTouchTests {
 
     controller = keyboard()
     controller.touchTestTypeWord("nciht")
+    controller.selectionWillChange(nil)
+    TestEnvironment.proxy.documentContextBeforeInput = "nc"
+    TestEnvironment.proxy.documentContextAfterInput = "iht"
     controller.selectionDidChange(nil)
     controller.touchTestTapSpace()
-    checks.check("cursor change invalidates tracking", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+    checks.check("cursor change invalidates tracking", TestEnvironment.proxy.documentContextBeforeInput == "nc ")
 
     controller = keyboard()
     controller.touchTestTypeWord("nciht")

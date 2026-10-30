@@ -8,7 +8,24 @@ struct KeyboardCorrectionContext: Equatable {
   let selection: String?
   let allowed: Bool
 
-  var isSafe: Bool { allowed && before != nil && after != nil && (selection ?? "").isEmpty }
+  // UIKit may report nil after the cursor at end-of-document. Missing LEFT context
+  // still prevents replacement; nil and empty right/selection reports are equivalent.
+  var isSafe: Bool { allowed && before != nil && (selection ?? "").isEmpty }
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.document == rhs.document && lhs.before == rhs.before
+      && (lhs.after ?? "") == (rhs.after ?? "")
+      && (lhs.selection ?? "") == (rhs.selection ?? "") && lhs.allowed == rhs.allowed
+  }
+
+  static func reported(document: UUID, before: String?, after: String?, selection: String?,
+                       allowed: Bool, hasText: Bool) -> Self {
+    // Only a genuinely empty field can seed tracking without left context. Never infer
+    // that our previous insert landed from a buffer, or normalize an opaque nonempty field.
+    let readableBefore = before ?? (!hasText && (after ?? "").isEmpty ? "" : nil)
+    return Self(document: document, before: readableBefore, after: after,
+                selection: selection, allowed: allowed)
+  }
 
   func inserting(_ text: String) -> Self {
     Self(document: document, before: before.map { $0 + text }, after: after,
@@ -74,15 +91,29 @@ struct KeyboardAutocorrection {
   private var expected: KeyboardCorrectionContext?
   private var word = ""
   private var undo: Edit?
+  private(set) var awaitingHostReport = false
+  var hasTrackedWord: Bool { expected != nil && !word.isEmpty }
 
   mutating func invalidate() {
     expected = nil
     word = ""
     undo = nil
+    awaitingHostReport = false
+  }
+
+  mutating func hostWillChange() {
+    // Do not discard a possible acknowledgement of our own insert. No edit is allowed
+    // until the corresponding did-change report matches the complete expected context.
+    awaitingHostReport = true
+  }
+
+  mutating func hostDidChange(_ context: KeyboardCorrectionContext) {
+    guard context.isSafe, expected == context else { invalidate(); return }
+    awaitingHostReport = false
   }
 
   mutating func reconcile(_ context: KeyboardCorrectionContext) {
-    guard context.isSafe, expected == context else { invalidate(); return }
+    guard !awaitingHostReport, context.isSafe, expected == context else { invalidate(); return }
   }
 
   /// Called before a manual character insert, not for shortcuts, dictation or agent output.
@@ -109,7 +140,7 @@ struct KeyboardAutocorrection {
                            provider: KeyboardCorrectionProvider) -> Edit? {
     reconcile(context)
     guard expected != nil, KeyboardCorrectionRules.isWord(word),
-          context.after?.isEmpty == true || context.after?.first?.isWhitespace == true,
+          (context.after ?? "").isEmpty || context.after?.first?.isWhitespace == true,
           let replacement = KeyboardCorrectionRules.replacement(
             for: word, suggestions: provider.suggestions(for: word)) else { return nil }
     return Edit(original: word, replacement: replacement, context: context)

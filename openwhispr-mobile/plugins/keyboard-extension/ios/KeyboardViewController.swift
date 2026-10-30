@@ -1303,15 +1303,14 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   override func textWillChange(_ textInput: UITextInput?) {
     super.textWillChange(textInput)
-    // A host edit can be announced before its new context is readable. The old matching
-    // snapshot must not authorize a replacement in that interval.
-    autocorrection.invalidate()
+    // Block replacement until the completion report proves whether this was our insert.
+    autocorrection.hostWillChange()
   }
 
   override func textDidChange(_ textInput: UITextInput?) {
     super.textDidChange(textInput)
-    autocorrection.reconcile(correctionContext())
     noteFieldReport()
+    autocorrection.hostDidChange(correctionContext())
     syncShiftWithContextIfNeeded()
     refreshFieldAwareKeys()
     _ = consumePendingTranscriptIfAvailable(trigger: "textDidChange")
@@ -1552,12 +1551,13 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   override func selectionWillChange(_ textInput: UITextInput?) {
     super.selectionWillChange(textInput)
-    autocorrection.invalidate()
+    autocorrection.hostWillChange()
   }
 
   override func selectionDidChange(_ textInput: UITextInput?) {
     super.selectionDidChange(textInput)
-    autocorrection.invalidate()
+    noteFieldReport()
+    autocorrection.hostDidChange(correctionContext())
   }
 
   private func correctionContext() -> KeyboardCorrectionContext {
@@ -1567,11 +1567,12 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     case .default: ordinaryField = true
     default: ordinaryField = false
     }
-    return KeyboardCorrectionContext(
+    return KeyboardCorrectionContext.reported(
       document: proxy.documentIdentifier, before: proxy.documentContextBeforeInput,
       after: proxy.documentContextAfterInput, selection: proxy.selectedText,
       allowed: ordinaryField && !fieldHidesItsText
-        && proxy.isSecureTextEntry != true && proxy.autocorrectionType != .no)
+        && proxy.isSecureTextEntry != true && proxy.autocorrectionType != .no,
+      hasText: proxy.hasText)
   }
 
   private func undoContext(for edit: KeyboardAutocorrection.Edit) -> KeyboardCorrectionContext {
@@ -1583,6 +1584,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   private func applyManualSpaceCorrection() -> Bool {
     let context = correctionContext()
+    // Flags only: never emit the word, surrounding text, document UUID or proposals.
+    KeyboardLog.ui.info("Autocorrection space: allowed=\(context.allowed, privacy: .public) leftKnown=\(context.before != nil, privacy: .public) rightKnown=\(context.after != nil, privacy: .public) selected=\(!(context.selection ?? "").isEmpty, privacy: .public) tracked=\(self.autocorrection.hasTrackedWord, privacy: .public) awaitingReport=\(self.autocorrection.awaitingHostReport, privacy: .public)")
     guard context.isSafe else {
       autocorrection.invalidate()
       return false
@@ -1593,6 +1596,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       autocorrection.invalidate()
       return false
     }
+    KeyboardLog.ui.info("Autocorrection applying verified replacement")
     for _ in edit.original { textDocumentProxy.deleteBackward() }
     typeText(edit.replacement + " ")
     autocorrection.didCorrect(edit)

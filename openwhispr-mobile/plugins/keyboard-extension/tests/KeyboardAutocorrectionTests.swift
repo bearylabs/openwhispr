@@ -103,8 +103,61 @@ private enum KeyboardAutocorrectionTests {
         in: current, provider: StubProvider(words: [replacement])) == nil)
     }
 
+    // Real UIKit proxies use nil at document boundaries, unlike the initial mocks.
+    var empty = KeyboardCorrectionContext.reported(
+      document: document, before: nil, after: nil, selection: nil, allowed: true, hasText: false)
+    check("known empty field seeds left context", empty.before == "" && empty.isSafe)
+    state = KeyboardAutocorrection()
+    for letter in "nciht" {
+      state.manualInsertion(String(letter), in: empty)
+      empty = empty.inserting(String(letter))
+      state.hostWillChange()
+      state.hostDidChange(empty)
+    }
+    // Hosts may switch between nil and empty-string boundary reports after insertion.
+    let emptyStringBoundary = context("nciht", after: "", selection: "", document: document)
+    state.hostWillChange()
+    state.hostDidChange(emptyStringBoundary)
+    let boundaryEdit = state.correction(in: empty, provider: provider)
+    check("nil right context at end permits verified correction", boundaryEdit?.replacement == "nicht")
+    state.didCorrect(boundaryEdit!)
+    state.hostWillChange()
+    let boundaryCorrected = context("nicht ", after: nil, document: document)
+    state.hostDidChange(boundaryCorrected)
+    check("nil right context undo", state.takeUndo(in: boundaryCorrected)?.original == "nciht")
+    let hidden = KeyboardCorrectionContext.reported(
+      document: document, before: nil, after: nil, selection: nil, allowed: true, hasText: true)
+    check("nonempty opaque field is still unsafe", !hidden.isSafe && hidden.before == nil)
+    let rightText = KeyboardCorrectionContext.reported(
+      document: document, before: nil, after: "existing", selection: nil, allowed: true, hasText: false)
+    check("right text contradicts empty field", !rightText.isSafe)
+    check("only empty boundary reports are equivalent",
+      context("nciht", after: nil, document: document) == context("nciht", document: document))
+    check("nonempty right context is never ignored",
+      context("nciht", after: "x", document: document) != context("nciht", document: document))
+    check("missing left context is never equal to empty",
+      context(nil, document: document) != context("", document: document))
+
+    (state, current) = typed("nciht", document: document)
+    state.hostWillChange()
+    state.hostDidChange(current)
+    check("matching own acknowledgement retains word", state.correction(in: current, provider: provider) != nil)
+    (state, current) = typed("nciht", document: document)
+    state.hostWillChange()
+    check("pending report blocks correction despite matching stale read", state.correction(in: current, provider: provider) == nil)
+    state.hostDidChange(current)
+    check("blocked pending attempt cannot revive", state.correction(in: current, provider: provider) == nil)
+    (state, current) = typed("nciht", document: document)
+    state.hostWillChange()
+    state.hostDidChange(context("nc", after: "iht", document: document))
+    check("actual cursor move invalidates", state.correction(in: current, provider: provider) == nil)
+    (state, current) = typed("nciht", document: document)
+    state.hostWillChange()
+    state.hostDidChange(context("nci", document: document))
+    check("delayed own acknowledgement invalidates", state.correction(in: current, provider: provider) == nil)
+
     let unsafe = [
-      context(nil, document: document), context("nciht", after: nil, document: document),
+      context(nil, document: document),
       context("nciht", selection: "chosen", document: document),
       context("nciht", allowed: false, document: document),
       context("nciht", document: UUID()), context("nci", document: document),
