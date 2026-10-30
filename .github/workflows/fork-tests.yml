@@ -1,0 +1,140 @@
+name: Fork tests
+run-name: "Fork tests · ${{ inputs.source_ref || 'main' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: App branch or immutable commit to test (not the test infrastructure branch)
+        type: string
+        default: main
+  push:
+    branches: [fork-tests]
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  EXPO_NO_DOTENV: "1"
+  SENTRY_DISABLE_AUTO_UPLOAD: "true"
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Resolve app ref once for every job
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REF: ${{ inputs.source_ref || 'main' }}
+        run: |
+          [[ "$SOURCE_REF" =~ ^[A-Za-z0-9._/-]+$ ]]
+          sha=$(gh api "repos/bearylabs/openwhispr/commits/$SOURCE_REF" --jq .sha)
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          printf 'App source: `%s`\n\nTest infrastructure: `%s`\n' "$sha" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+  infrastructure:
+    name: Test infrastructure isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: python3 -m unittest discover -s fork-tests/tests -v
+      - name: App main must contain no fork-only infrastructure
+        run: |
+          git fetch --no-tags origin main
+          git fetch --no-tags https://github.com/OpenWhispr/openwhispr.git main:refs/remotes/upstream/main
+          python3 fork-tests/export-upstream.py --source origin/main
+
+  mobile:
+    name: Mobile ${{ matrix.check }}
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [static, tests, bundles]
+    defaults:
+      run:
+        working-directory: source/openwhispr-mobile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: source/openwhispr-mobile/.nvmrc
+          cache: npm
+          cache-dependency-path: source/openwhispr-mobile/package-lock.json
+      - name: Validate dependency sources and integrity
+        run: npx --yes --ignore-scripts --package=lockfile-lint@5.0.1 lockfile-lint --path package-lock.json --type npm --validate-https --allowed-hosts npm --validate-integrity
+      - name: Reject high and critical dependency advisories
+        run: npx --yes --ignore-scripts --package=audit-ci@7.1.0 audit-ci --config audit-ci.json
+      - name: Install and apply reviewed patches
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node_modules/.bin/patch-package --error-on-fail
+          npm run test:security
+      - name: Formatting, lint, types and Expo configuration
+        if: matrix.check == 'static'
+        run: |
+          npm run check
+          OPENWHISPR_APP_ENV=development node_modules/.bin/expo config --type public > /dev/null
+          OPENWHISPR_APP_ENV=production node_modules/.bin/expo config --type public > /dev/null
+      - name: All mobile JavaScript tests
+        if: matrix.check == 'tests'
+        run: |
+          npm rebuild better-sqlite3
+          npm run test --ignore-scripts -- --ci --runInBand
+      - name: Production iOS bundle
+        if: matrix.check == 'bundles'
+        env:
+          OPENWHISPR_APP_ENV: production
+        run: node_modules/.bin/expo export --platform ios --max-workers 2 --output-dir "$RUNNER_TEMP/mobile-export"
+
+  native:
+    name: All native Mac tests
+    needs: resolve
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: source
+          persist-credentials: false
+      - name: Native provider transport
+        run: python3 source/openwhispr-mobile/modules/background-uploader/tests/run-provider-transport-tests.py
+      - name: Keyboard return resolver
+        if: ${{ !cancelled() }}
+        run: bash source/openwhispr-mobile/modules/app-group-storage/tests/run-return-target-tests.sh
+      - name: Hotkey dictation logic
+        if: ${{ !cancelled() }}
+        run: python3 source/openwhispr-mobile/plugins/hotkey-dictation/tests/run-hotkey-logic-tests.py
+      - name: Live Activity resolver
+        if: ${{ !cancelled() }}
+        run: sh source/openwhispr-mobile/modules/live-activity/tests/run-resolver-tests.sh
+      - name: Keyboard layout and hit testing (temporary headless adapter)
+        if: ${{ !cancelled() }}
+        run: python3 control/fork-tests/run-keyboard-tests.py source
+      - name: Keyboard capitalization
+        if: ${{ !cancelled() }}
+        run: sh source/openwhispr-mobile/scripts/test-keyboard-capitalization.sh
+      - name: Verify adapter did not modify the source checkout
+        if: ${{ !cancelled() }}
+        run: test -z "$(git -C source status --porcelain)"
