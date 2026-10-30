@@ -105,6 +105,56 @@ private extension KeyboardViewController {
   }
 
   @MainActor
+  static func checkPresentationGeometry(_ checks: inout TouchChecks) {
+    TestEnvironment.reset()
+    defer { TestEnvironment.reset() }
+    TestEnvironment.proxy.documentContextBeforeInput = "PRIVATE_FIELD_TEXT_NOT_FOR_LOGS"
+    let controller = makeLaidOutKeyboard(width: 402)
+    let input = controller.keyboardInputView
+    let host = UIView(frame: CGRect(x: 0, y: 0, width: 402, height: 500))
+    host.addSubview(input)
+    input.frame.origin.y = 37
+    let requested = controller.preferredContentSize
+    let first = controller.keyboardGeometry()!
+    checks.check("geometry: reports detached host before presentation", first.contains("window=false"))
+    checks.check("geometry: captures ancestor frame", first.contains("frame=\(host.frame)"))
+    checks.check("geometry: captures input origin", first.contains("frame=\(input.frame)"))
+    checks.check("geometry: captures toolbar in input coordinates",
+      first.contains("toolbar=\(controller.topBar.convert(controller.topBar.bounds, to: input))"))
+    checks.check("geometry: excludes field content", !first.contains("PRIVATE_FIELD_TEXT_NOT_FOR_LOGS"))
+
+    // A host can change the presentation without changing our requested size.
+    // The old requested-size-only log could not distinguish these cases.
+    input.frame.origin.y = 0
+    host.bounds.size.height += 17
+    controller.additionalSafeAreaInsets = UIEdgeInsets(top: 17, left: 0, bottom: 0, right: 0)
+    let second = controller.keyboardGeometry()!
+    checks.check("geometry: detects host changes with unchanged requested size",
+      first != second && controller.preferredContentSize == requested)
+    checks.check("geometry: captures additional safe area", second.contains("additionalSafe=\(controller.additionalSafeAreaInsets)"))
+    let frame = input.frame
+    controller.viewSafeAreaInsetsDidChange()
+    checks.check("geometry: observation never changes the input frame", input.frame == frame)
+    controller.viewWillAppear(false)
+    controller.viewDidAppear(false) // No Full Access: still captures this presentation.
+    checks.check("geometry: first presentation counted without Full Access", controller.presentationCount == 1)
+    controller.viewWillDisappear(false)
+    controller.viewWillAppear(false)
+    controller.viewDidAppear(false)
+    checks.check("geometry: second presentation distinguishable", controller.presentationCount == 2)
+    checks.check("geometry: root remains the same input view", controller.view === input)
+
+    var trace = KeyboardGeometryTrace()
+    checks.check("geometry trace: first layout captured", trace.record("layout", geometry: "a") != nil)
+    checks.check("geometry trace: repeated layout suppressed", trace.record("layout", geometry: "a") == nil)
+    checks.check("geometry trace: unchanged appearance retained", trace.record("didAppear", geometry: "a") != nil)
+    checks.check("geometry trace: changed layout retained", trace.record("layout", geometry: "b") != nil)
+    for _ in 0..<200 { _ = trace.record("safeAreaChanged", geometry: "b") }
+    checks.check("geometry trace: bounded even if the host churns", trace.count == 96)
+    checks.check("geometry trace: exhausted budget emits nothing", trace.record("didAppear", geometry: "c") == nil)
+  }
+
+  @MainActor
   static func checkInitialSelfSizing(_ checks: inout TouchChecks) {
     TestEnvironment.reset()
     defer { TestEnvironment.reset() }
@@ -414,6 +464,7 @@ private enum KeyboardTouchTests {
     }
     checkFieldAwareKeys(&checks)
     checkLayoutChanges(&checks)
+    KeyboardViewController.checkPresentationGeometry(&checks)
     KeyboardViewController.checkInitialSelfSizing(&checks)
     KeyboardViewController.checkMinimalKeyboardHeight(&checks, width: 402)
     KeyboardViewController.checkMinimalKeyboardHeight(&checks, width: 375, globe: true)
