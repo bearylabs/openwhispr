@@ -17,7 +17,7 @@ not an app release.
   old fork CI history. Recovery only; never use it as a PR source.
 
 Create new topic branches from `upstream/main`, not `integration`. Merge topic
-branches into `integration` when needed. Keep tests separate and dispatch an app
+branches into `integration` when needed. Keep **fork-only test infrastructure** separate and dispatch an app
 SHA. To refresh main: fetch upstream, switch to main with a clean worktree, run
 `git merge --ff-only upstream/main`, then `git push origin main`. If it diverges,
 inspect it rather than merging personal commits into main.
@@ -149,8 +149,9 @@ git diff upstream/main...pr/recovered-app --stat
 git diff upstream/main...pr/recovered-app
 ```
 
-The helper rejects test-branch files, the fork-only workflow and known headless
-adaptations. It applies only the app's net patch onto `upstream/main` using a
+The helper rejects test-branch files, the fork-only workflow, known headless
+adaptations, changes to existing upstream tests, and temporary tests. New permanent
+feature test files are allowed and are included in a clean export. It applies only the app's net patch onto `upstream/main` using a
 **temporary index**, creates one local commit with upstream as its parent, and
 never pushes, switches your checkout, overwrites a branch or rewrites history.
 Conflicts or adapter markers fail closed. The clean branches already separate
@@ -158,6 +159,62 @@ the keyboard work from the URI security fix; do not export integration as one PR
 This is a guard, not a
 server-side guarantee: a manually pushed branch/PR can bypass it. Always inspect
 the final PR diff and commit list. Native/UI tests do not prove a PR is clean.
+
+## Permanent feature tests vs existing/temporary tests
+
+Permanent regression coverage for a new feature belongs on the **same feature branch**
+and in the upstream PR, as **new files** in the regular upstream test layout. It must
+not be isolated on `tests` just because it is a test. For example:
+
+- `openwhispr-mobile/plugins/keyboard-extension/tests/KeyboardAutocorrectionTests.swift`
+- `openwhispr-mobile/src/__tests__/newFeature.test.ts`
+- `openwhispr-mobile/scripts/test-new-feature.sh`
+- `test/helpers/newFeature.test.js`
+
+The push guard/exporter enforce the following policy relative to the feature's merge
+base with `upstream/main` (not relative to its preceding feature commit):
+
+1. **Allowed:** new permanent test files, new fixtures, and new dedicated runners.
+   Tests introduced by this feature may be extended in subsequent feature commits.
+2. **Forbidden:** any change, deletion, rename or type change of a test, fixture or
+   runner already present in that upstream baseline. Even adding assertions to an
+   existing file is an existing-test change: put the new coverage in a separate file.
+3. **Forbidden:** temporary/debug probes and fork/headless-only tests. Known temporary
+   path tokens (`tmp`, `temp`, `temporary`, `scratch`, `headless`, `fork`) and explicit
+   comment markers such as `@temporary-test`, `@fork-only-test`, `@headless-only-test`
+   or `Temporary test ...` are rejected in test files. Ordinary use of temporary
+   directories *inside* a real permanent test is fine.
+4. Push checks also inspect **every intermediate commit**, including merge parents.
+   Reverting an existing-test change, removing a temporary marker, or deleting a
+   temporary test in a later commit does not make that PR history clean. A newly added
+   test must still exist at the branch tip; transient tests belong outside PR history.
+   Use a reviewed clean/squashed export when recovering such a branch, not a bypass.
+5. New tests must be regular files, not symlinks. Filenames are handled with Git's NUL
+   protocol so spaces/newlines cannot hide changes from the guard. Known test folders,
+   `.test.*`/`.spec.*`, `test_*`, Swift `*Tests.swift`, dedicated runners and test configs
+   are recognized. Existing upstream test directories also protect their fixtures.
+
+The root `tests/` and `fork-tests/` namespaces remain reserved for personal infrastructure;
+use upstream's regular `test/`, nested `tests/` or `__tests__/` layout for product coverage.
+Personal workflows remain excluded; this policy does not permit editing the existing
+upstream `mobile-ci.yml` or merging the `tests` branch into a feature branch.
+
+This is an enforceable **file/path/history** rule, not a semantic proof that a test is
+permanent or feature-relevant. Do not rename a probe to evade it; review new test content,
+its runner/registration, feature scope and the final PR diff. Untagged temporary code in
+ordinary product files cannot reliably be detected by a local guard.
+
+These rules apply prospectively to app/PR pushes as well as clean exports. In particular,
+the current `feat/ios-autocorrection` history edits existing `KeyboardTouchTests.swift`
+and `withKeyboardExtension.test.ts`; new pushes of that source are now refused. Its new
+standalone tests are allowed, but a future clean PR must move its extra coverage out of
+those existing test files and leave their upstream versions unchanged. Do not silently
+rewrite an existing remote feature branch just to satisfy the new policy.
+
+The guard reads `origin/tests:tests/export-upstream.py`, so publishing/fetching the `tests`
+branch activates the policy without changing the installed pre-push hook. Infrastructure
+maintenance on `tests` remains exempt from app-PR restrictions, and must never be exported
+upstream. Other worktrees and their working files must not be modified for guard maintenance.
 
 ## Security audit vs test harness errors
 
