@@ -27,6 +27,26 @@ private final class KeyboardInputView: UIInputView {
     CGSize(width: UIView.noIntrinsicMetric, height: contentHeight)
   }
 
+  // UIInputView's default fitting also measures its arranged content. That can
+  // outweigh the intrinsic height (or retain an old expanded size) even though
+  // our toolbar/rows already contributed to contentHeight. The self-sizing host
+  // must receive exactly that height, independently of the provisional frame.
+  override func systemLayoutSizeFitting(_ targetSize: CGSize) -> CGSize {
+    CGSize(width: targetSize.width, height: contentHeight)
+  }
+
+  override func systemLayoutSizeFitting(
+    _ targetSize: CGSize,
+    withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+    verticalFittingPriority: UILayoutPriority
+  ) -> CGSize {
+    CGSize(width: targetSize.width, height: contentHeight)
+  }
+
+  override func sizeThatFits(_ size: CGSize) -> CGSize {
+    CGSize(width: size.width, height: contentHeight)
+  }
+
   func updateContentHeight(_ height: CGFloat) {
     guard contentHeight != height else { return }
     contentHeight = height

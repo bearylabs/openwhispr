@@ -133,6 +133,11 @@ private extension KeyboardViewController {
       let requested = controller.preferredContentSize
       controller.viewDidLayoutSubviews()
       checks.check("unchanged layout: sizing stays stable", controller.preferredContentSize == requested)
+      let target = CGSize(width: 402, height: provisionalHeight)
+      checks.check("provisional frame: simple fitting uses the content height",
+        input.systemLayoutSizeFitting(target) == CGSize(width: 402, height: input.contentHeight))
+      checks.check("provisional frame: sizeThatFits uses the content height",
+        input.sizeThatFits(target) == CGSize(width: 402, height: input.contentHeight))
     }
 
     // Ask Auto Layout for the size; do not assign preferredContentSize to the frame.
