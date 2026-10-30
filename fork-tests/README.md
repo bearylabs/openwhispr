@@ -25,7 +25,8 @@ a committed SHA covers them. In `/home/hrudek/dev/openwhispr`:
 APP_SHA=$(git rev-parse main) # use your feature branch instead of main if appropriate
 git push origin main       # likewise use the actual app branch
 # Select the infrastructure branch explicitly; never merge it into the app.
-gh workflow run fork-tests.yml --repo bearylabs/openwhispr --ref fork-tests -f source_ref="$APP_SHA"
+WORKFLOW_ID=$(gh api repos/bearylabs/openwhispr/actions/workflows --paginate --jq '.workflows[] | select(.path == ".github/workflows/fork-tests.yml") | .id')
+gh workflow run "$WORKFLOW_ID" --repo bearylabs/openwhispr --ref fork-tests -f source_ref="$APP_SHA"
 gh run list --repo bearylabs/openwhispr --branch fork-tests --limit 5
 gh run watch RUN_ID --repo bearylabs/openwhispr --exit-status
 gh run view RUN_ID --repo bearylabs/openwhispr --log-failed
@@ -37,7 +38,13 @@ would otherwise fail on app pushes. Its source file stays identical to upstream;
 `fork-tests.yml` replaces it for fork development and runs the same mobile suites
 plus the isolated adapter. Do not disable all repository Actions.
 
-Actions must remain enabled in the fork. GitHub can require a one-time confirmation
+The numeric workflow ID is intentional: `gh workflow run fork-tests.yml` tries to
+look up that file on the default branch and returns 404, whereas dispatch by ID
+with `--ref fork-tests` works. The currently registered ID is `401750843`.
+Alternatively, extract/run `fork-tests/run-all-tests.sh APP_BRANCH_OR_SHA`; it
+resolves the workflow ID and verifies that the app commit is available on GitHub.
+
+GitHub can require a one-time confirmation
 on its Actions page; changing API permissions alone did not clear that fork gate.
 A push to **fork-tests** also tests the then-current `main` automatically. App
 pushes do **not** automatically invoke this branch's workflow: dispatch explicitly
@@ -85,6 +92,14 @@ python3 /path/to/test-branch/fork-tests/run-keyboard-tests.py /path/to/app-check
 ```
 
 ## Upstream PR safety
+
+A local pre-push guard is installed for this checkout. To install it on another
+checkout, run `bash fork-tests/install-guard.sh` from this branch. It refuses to
+overwrite another hook manager. It blocks test-branch contents/headless markers
+on pushes to fork `main`, `pr/*` and the upstream repository; ordinary pushes to
+`fork-tests` are allowed. It reads the exporter from `origin/fork-tests`, so fetch
+that ref before using the guard in a fresh clone. This is local enforcement, not
+a GitHub repository rule; `--no-verify`, another clone or the web UI can bypass it.
 
 **Never PR `fork-tests` or fork `main` directly.** Even though the app's net diff
 has been cleaned, its history still contains yesterday's fork-only CI commits.

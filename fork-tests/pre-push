@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# openwhispr-fork-tests-guard-v1
+# Local safety belt; does not modify upstream files or replace PR review.
+set -euo pipefail
+remote=${1:?}
+url=${2:?}
+protected_remote=false
+case "$url" in
+  *github.com/OpenWhispr/openwhispr*) protected_remote=true ;;
+esac
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ "$local_sha" != 0000000000000000000000000000000000000000 ]] || continue
+  guarded=false
+  if [[ "$protected_remote" == true || "$remote_ref" == refs/heads/main || "$remote_ref" == refs/heads/pr/* ]]; then
+    guarded=true
+  fi
+  [[ "$guarded" == true ]] || continue
+  if git show "$local_sha:fork-tests/README.md" >/dev/null 2>&1; then
+    echo 'REFUSED: fork-tests infrastructure must not be pushed to main or an upstream/PR branch.' >&2
+    exit 1
+  fi
+  guard=$(mktemp)
+  trap 'rm -f "$guard"' EXIT
+  git show origin/fork-tests:fork-tests/export-upstream.py > "$guard"
+  python3 "$guard" --source "$local_sha"
+  rm -f "$guard"
+  trap - EXIT
+done
