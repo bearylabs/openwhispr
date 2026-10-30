@@ -17,76 +17,6 @@ private enum KeyboardLog {
   }
 }
 
-/// Bounded, geometry-only diagnostics for comparing cold and warm presentations.
-/// Never include textDocumentProxy, host identities, URLs or recording state here.
-private struct KeyboardGeometryTrace {
-  private(set) var count = 0
-  private var lastGeometry: String?
-  private let instance = String(UUID().uuidString.prefix(8))
-
-  mutating func record(_ event: String, geometry: String) -> String? {
-    guard count < 96 else { return nil }
-    // Layout can run repeatedly without changing anything. Lifecycle events still
-    // matter even when the geometry is identical (especially the second opening).
-    guard event != "layout" || geometry != lastGeometry else { return nil }
-    lastGeometry = geometry
-    count += 1
-    return "KEYBOARD_GEOMETRY instance=\(instance) seq=\(count) event=\(event) \(geometry)"
-  }
-}
-
-/// One sizing contract for both the extension content and iOS's keyboard backdrop.
-/// Do not pin this view's height with a required constraint: the host supplies its
-/// own frame during presentation and must be able to negotiate the initial size.
-private final class KeyboardInputView: UIInputView {
-  private(set) var contentHeight: CGFloat = 0
-  let geometryID = String(UUID().uuidString.prefix(8))
-  private var sizingTrace = KeyboardGeometryTrace()
-
-  private func recordSizing(_ method: String, target: CGSize) {
-    // In particular, preserve queries before viewDidLoad supplies contentHeight.
-    // Do not ask the controller to lay out from inside a sizing callback.
-    let geometry = "input=\(geometryID) target=\(target) content=\(contentHeight) bounds=\(bounds) safe=\(safeAreaInsets) window=\(window != nil) selfSizing=\(allowsSelfSizing)"
-    if let message = sizingTrace.record("layout", geometry: "method=\(method) \(geometry)") {
-      KeyboardLog.ui.notice("\(message, privacy: .public)")
-    }
-  }
-
-  override var intrinsicContentSize: CGSize {
-    recordSizing("intrinsic", target: bounds.size)
-    return CGSize(width: UIView.noIntrinsicMetric, height: contentHeight)
-  }
-
-  // UIInputView's default fitting also measures its arranged content. That can
-  // outweigh the intrinsic height (or retain an old expanded size) even though
-  // our toolbar/rows already contributed to contentHeight. The self-sizing host
-  // must receive exactly that height, independently of the provisional frame.
-  override func systemLayoutSizeFitting(_ targetSize: CGSize) -> CGSize {
-    recordSizing("fitting", target: targetSize)
-    return CGSize(width: targetSize.width, height: contentHeight)
-  }
-
-  override func systemLayoutSizeFitting(
-    _ targetSize: CGSize,
-    withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
-    verticalFittingPriority: UILayoutPriority
-  ) -> CGSize {
-    recordSizing("fittingPriority(\(horizontalFittingPriority.rawValue),\(verticalFittingPriority.rawValue))", target: targetSize)
-    return CGSize(width: targetSize.width, height: contentHeight)
-  }
-
-  override func sizeThatFits(_ size: CGSize) -> CGSize {
-    recordSizing("sizeThatFits", target: size)
-    return CGSize(width: size.width, height: contentHeight)
-  }
-
-  func updateContentHeight(_ height: CGFloat) {
-    guard contentHeight != height else { return }
-    contentHeight = height
-    invalidateIntrinsicContentSize()
-  }
-}
-
 /// Every colour the keyboard draws. Theme-dependent ones are dynamic: iOS applies both a
 /// light/dark switch and the host field's keyboardAppearance to the extension, so views
 /// restyle with no code. (Overriding the style from textDocumentProxy.keyboardAppearance
@@ -1256,9 +1186,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var keysBuiltWithGlobe = false
   private var rootHeightConstraint: NSLayoutConstraint?
   private var topBarHeightConstraint: NSLayoutConstraint?
-  private var geometryTrace = KeyboardGeometryTrace()
-  private var presentationCount = 0
-  private var keyboardInputView: KeyboardInputView { view as! KeyboardInputView }
+  private var keyboardHeightConstraint: NSLayoutConstraint?
   private var rowHeightConstraints: [NSLayoutConstraint] = []
   private var isRemoteRecordingActive = false
   private var isDarwinStartPending = false
@@ -1367,9 +1295,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   override func loadView() {
-    // Let the host size the entire keyboard from its intrinsic content height,
-    // rather than retaining a default typing-keyboard frame around the compact bar.
-    let inputView = KeyboardInputView(frame: .zero, inputViewStyle: .keyboard)
+    // Let the host size the entire keyboard from our height constraint, rather
+    // than retaining its default typing-keyboard frame around the compact bar.
+    let inputView = UIInputView(frame: .zero, inputViewStyle: .keyboard)
     inputView.allowsSelfSizing = true
     view = inputView
   }
@@ -1383,41 +1311,12 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     refreshMinimalKeyboardPreference()
     refreshRecordButton()
     buildKeyboardIfNeeded()
-    recordGeometry("loaded")
   }
 
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
     refreshMetricsIfNeeded()
     applyKeyboardHeight()
-    recordGeometry("layout")
-  }
-
-  override func viewSafeAreaInsetsDidChange() {
-    super.viewSafeAreaInsetsDidChange()
-    recordGeometry("safeAreaChanged")
-  }
-
-  private func keyboardGeometry() -> String? {
-    // viewIfLoaded avoids loading/re-entering the controller during UIKit callbacks.
-    guard let input = viewIfLoaded as? KeyboardInputView else { return nil }
-    var ancestors: [String] = []
-    var ancestor = input.superview
-    // Public geometry only; no private UIKit APIs or host-specific class names.
-    while let current = ancestor, ancestors.count < 4 {
-      ancestors.append("frame=\(current.frame),bounds=\(current.bounds),safe=\(current.safeAreaInsets)")
-      ancestor = current.superview
-    }
-    let toolbar = topBar.isDescendant(of: input) ? topBar.convert(topBar.bounds, to: input) : .null
-    return "input=\(input.geometryID) presentation=\(presentationCount) minimal=\(minimalKeyboardEnabled) window=\(input.window != nil) frame=\(input.frame) bounds=\(input.bounds) safe=\(input.safeAreaInsets) additionalSafe=\(additionalSafeAreaInsets) margins=\(input.layoutMargins) requested=\(preferredContentSize) content=\(input.contentHeight) root=\(rootStack.frame) toolbar=\(toolbar) ancestors=\(ancestors)"
-  }
-
-  private func recordGeometry(_ event: String) {
-    guard let geometry = keyboardGeometry(),
-      let message = geometryTrace.record(event, geometry: geometry) else { return }
-    // Notice survives Release builds. DEBUG-only requested-size logs missed the
-    // device failure, and unchanged preferredContentSize says nothing about the host.
-    KeyboardLog.ui.notice("\(message, privacy: .public)")
   }
 
   private func applyKeyboardHeight() {
@@ -1433,15 +1332,19 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       || showsFullAccessPanel
     let baseHeight = needsCanvas ? metrics.keyboardHeight : typingLayoutHeight
     let keyboardHeight = baseHeight + (showsCardHeight ? Metrics.agentReviewExtraHeight : 0)
-    if rootHeightConstraint?.constant != typingLayoutHeight {
-      rootHeightConstraint?.constant = typingLayoutHeight
-    }
+    rootHeightConstraint?.constant = typingLayoutHeight
 
-    keyboardInputView.updateContentHeight(keyboardHeight)
-    let requestedSize = CGSize(width: layoutWidth, height: keyboardHeight)
-    guard preferredContentSize != requestedSize else { return }
-    preferredContentSize = requestedSize
-    KeyboardLog.echo("Keyboard size requested=\(requestedSize) actual=\(view.bounds.size)")
+    if let keyboardHeightConstraint {
+      keyboardHeightConstraint.constant = keyboardHeight
+    } else {
+      let constraint = view.heightAnchor.constraint(equalToConstant: keyboardHeight)
+      // This is the host's sizing contract, not a content-layout preference.
+      // A yielding constraint can leave the system's full-height frame intact.
+      constraint.priority = .required
+      constraint.isActive = true
+      keyboardHeightConstraint = constraint
+    }
+    preferredContentSize = CGSize(width: view.bounds.width, height: keyboardHeight)
   }
 
   override func textDidChange(_ textInput: UITextInput?) {
@@ -1456,20 +1359,14 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   // textDidChange when the keyboard opens: shift and the return key follow the field here.
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
-    presentationCount += 1
-    recordGeometry("willAppear.beforeRefresh")
-    refreshMetricsIfNeeded()
     refreshMinimalKeyboardPreference()
     noteFieldReport()
     syncShiftWithContextIfNeeded()
     refreshFieldAwareKeys()
-    recordGeometry("willAppear.afterRefresh")
   }
 
   override func viewDidAppear(_ animated: Bool) {
     super.viewDidAppear(animated)
-    // Capture even without Full Access, and before any handoff/review early return.
-    recordGeometry("didAppear")
     // Without Full Access every write below is a no-op and every resume gate
     // reads a dead App Group. Today this method reaches refreshRecordButton()
     // anyway, but only because four separate resume gates each happen to fail
@@ -1510,7 +1407,6 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   override func viewWillDisappear(_ animated: Bool) {
     super.viewWillDisappear(animated)
-    recordGeometry("willDisappear")
     logRecordMarker("viewWillDisappear")
     closeCompactToneMenu()
     stopDeleteRepeating()
@@ -1760,9 +1656,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     rootHeightConstraint = rootStack.heightAnchor.constraint(equalToConstant: metrics.keyboardHeight)
     rootHeightConstraint?.priority = UILayoutPriority(999)
     let rootTopConstraint = rootStack.topAnchor.constraint(equalTo: view.topAnchor)
-    // The input view's intrinsic height wins over this cosmetic top alignment,
-    // including when a review card reserves extra space above the typing rows.
-    rootTopConstraint.priority = UILayoutPriority(249)
+    rootTopConstraint.priority = .defaultHigh
 
     NSLayoutConstraint.activate([
       rootStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
