@@ -2598,12 +2598,6 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     applyKeyboardHeight()
   }
 
-  private func selectCompactTone(_ tone: String) {
-    KeyboardHandoffProvider.shared.setTone(tone)
-    closeCompactToneMenu()
-    refreshToneButton()
-  }
-
   private func refreshToneButton() {
     // isToneApplicable() fails open on a dead App Group — `guard let defaults`
     // then `!= "0"` reads a live-but-empty suite as applicable — so the tone
@@ -2661,7 +2655,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
         button.setTitle((item.value == current ? "✓ " : "") + item.title, for: .normal)
         button.isEnabled = applicable || item.value == "default"
         button.addAction(UIAction { [weak self] _ in
-          self?.selectCompactTone(item.value)
+          KeyboardHandoffProvider.shared.setTone(item.value)
+          self?.closeCompactToneMenu()
+          self?.refreshToneButton()
         }, for: .touchUpInside)
         compactToneMenu.addArrangedSubview(button)
       }

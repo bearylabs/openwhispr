@@ -10,8 +10,7 @@ private enum TestEnvironment {
   /// A compact vertical size class: a phone in landscape.
   static var landscape = false
   static var tablet = false
-  // Layout/hit tests exercise the typing UI, not the permissions overlay.
-  static var fullAccess = true
+  static var fullAccess = false
   static var proxy = TestTextProxy()
 
   static func install() {
@@ -38,7 +37,7 @@ private enum TestEnvironment {
     globe = false
     landscape = false
     tablet = false
-    fullAccess = true
+    fullAccess = false
     proxy = TestTextProxy()
   }
 }
@@ -260,12 +259,7 @@ private extension KeyboardViewController {
     checks.check("ending recording restores compact height",
       controller.keyboardInputView.contentHeight == compactHeight)
 
-    // The headless Catalyst runner has no UIApplication event dispatch.
-    // Verify the wiring, then call the same handler directly.
-    checks.check("tone button is wired to compact menu handler",
-      controller.toneButton.actions(forTarget: controller, forControlEvent: .touchUpInside)?
-        .contains("handleCompactToneTapped") == true)
-    controller.handleCompactToneTapped()
+    controller.toneButton.sendActions(for: .touchUpInside)
     layout()
     checks.check("tone menu expands minimal keyboard",
       controller.view.bounds.height == compactHeight + Self.compactToneMenuHeight
@@ -275,7 +269,7 @@ private extension KeyboardViewController {
     checks.check("compact menu offers the formal tone", formal != nil)
     if let formal {
       checkTappable("formal tone", formal)
-      controller.selectCompactTone("formal")
+      formal.sendActions(for: .touchUpInside)
     }
     layout()
     checks.check("tone selection persists to App Group",
@@ -283,13 +277,13 @@ private extension KeyboardViewController {
     checks.check("tone selection collapses keyboard",
       controller.view.bounds.height == compactHeight && controller.compactToneMenu.isHidden)
 
-    controller.handleCompactToneTapped()
-    controller.handleCompactToneTapped()
+    controller.toneButton.sendActions(for: .touchUpInside)
+    controller.toneButton.sendActions(for: .touchUpInside)
     layout()
     checks.check("tapping tone icon again collapses keyboard",
       controller.view.bounds.height == compactHeight && controller.compactToneMenu.isHidden)
 
-    controller.handleCompactToneTapped()
+    controller.toneButton.sendActions(for: .touchUpInside)
     controller.viewWillDisappear(false)
     // The same preference refresh runs when this controller reappears.
     controller.refreshMinimalKeyboardPreference()
