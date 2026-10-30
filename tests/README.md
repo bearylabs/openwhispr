@@ -116,105 +116,66 @@ To run the adapter on a Mac:
 python3 /path/to/test-branch/tests/run-keyboard-tests.py /path/to/app-checkout
 ```
 
-## Upstream PR safety
+## Push safety and manual PR review
 
-A local pre-push guard is installed for this checkout. To install it on another
-checkout, run `bash tests/install-guard.sh` from this branch. It refuses to
-overwrite another hook manager. It blocks direct upstream pushes, requires fork
-`main` to equal the fetched `upstream/main`, and checks all other app branches
-(including `feat/*`) for known headless markers and fork infrastructure in their
-net diff AND intermediate history. `tests`, `backup/*` and `pr-assets/*` are
-explicitly exempt infrastructure/recovery/storage branches, never PR sources.
-It reads the exporter from `origin/tests`, so fetch that ref first. This is local
-enforcement, not a GitHub repository rule; `--no-verify`, another clone or the web
-UI can bypass it. The guard cannot judge product scope or unknown adaptations.
+**There is no automatic test-change restriction.** The pre-push hook no longer checks
+test paths, existing-test modifications, temporary/fork markers, source contents or
+test-related commit history. It does not invoke the exporter. These decisions belong
+to the person editing/reviewing the feature, not a filename/content heuristic.
 
-Use the clean topic branches for upstream PRs. Inspect both diff and commits:
+Only unrelated branch safeguards remain:
+
+- Direct pushes to `OpenWhispr/openwhispr` are refused; push to the fork and use a PR.
+- Fork `main` must match the last fetched `upstream/main`.
+
+The hook is local, not a server-side GitHub rule. Install/update it with
+`bash tests/install-guard.sh` from this infrastructure branch; the installer refuses
+to overwrite another hook manager. Unlike the old exporter-based policy, changing the
+remote `tests` branch alone does **not** replace an already installed hook: reinstall it
+in each clone that had the old version.
+
+### Review tests as part of the feature
+
+New permanent feature tests and justified adaptations of existing tests both belong in
+the feature's upstream PR. Updating expected behavior for an intentional product change
+is legitimate; removing assertions merely to hide a bug is not. Review this distinction
+rather than treating existing test files as immutable.
+
+Keep one-off probes, personal workflows and headless adapters out of product PRs by
+deliberate editing and diff/history review. Keep the personal `tests` infrastructure
+branch separate as described above. No path, marker or history heuristic enforces this;
+a green push or exporter exit status is **not** evidence that a PR's scope is correct.
+
+Before proposing an upstream PR:
 
 ```sh
-git log --oneline upstream/main..feat/ios-minimal-keyboard
-git diff upstream/main...feat/ios-minimal-keyboard
+git log --oneline upstream/main..YOUR_FEATURE_BRANCH
+git diff --stat upstream/main...YOUR_FEATURE_BRANCH
+git diff upstream/main...YOUR_FEATURE_BRANCH
 ```
 
-For recovery from a mixed historical source ONLY, export a clean net diff:
+The existing `feat/ios-autocorrection` branch is no longer blocked merely because it
+updates existing test files. Review those changes on their merits; there is no need to
+artificially split coverage solely to satisfy a guard.
+
+### Optional net-diff export
+
+For recovery from a branch whose history should not be proposed upstream, the helper can
+put its reviewed **complete net diff** on a new local `pr/...` branch:
 
 ```sh
-git fetch upstream main
-# Read/review or extract the helper from the test branch; no need to merge it:
 git show origin/tests:tests/export-upstream.py > /tmp/openwhispr-export-upstream.py
-python3 /tmp/openwhispr-export-upstream.py --source backup/main-before-upstream-sync-20261030
-# After reviewing product scope (this backup includes keyboard AND URI fix):
-python3 /tmp/openwhispr-export-upstream.py --source backup/main-before-upstream-sync-20261030 --create-branch pr/recovered-app
-git diff upstream/main...pr/recovered-app --stat
-git diff upstream/main...pr/recovered-app
+python3 /tmp/openwhispr-export-upstream.py --source YOUR_FEATURE_BRANCH --check-history
+# Only after manually reviewing source, scope, tests and temporary artifacts:
+python3 /tmp/openwhispr-export-upstream.py --source YOUR_FEATURE_BRANCH --create-branch pr/reviewed-feature
+git diff upstream/main...pr/reviewed-feature
 ```
 
-The helper rejects test-branch files, the fork-only workflow, known headless
-adaptations, changes to existing upstream tests, and temporary tests. New permanent
-feature test files are allowed and are included in a clean export. It applies only the app's net patch onto `upstream/main` using a
-**temporary index**, creates one local commit with upstream as its parent, and
-never pushes, switches your checkout, overwrites a branch or rewrites history.
-Conflicts or adapter markers fail closed. The clean branches already separate
-the keyboard work from the URI security fix; do not export integration as one PR.
-This is a guard, not a
-server-side guarantee: a manually pushed branch/PR can bypass it. Always inspect
-the final PR diff and commit list. Native/UI tests do not prove a PR is clean.
-
-## Permanent feature tests vs existing/temporary tests
-
-Permanent regression coverage for a new feature belongs on the **same feature branch**
-and in the upstream PR, as **new files** in the regular upstream test layout. It must
-not be isolated on `tests` just because it is a test. For example:
-
-- `openwhispr-mobile/plugins/keyboard-extension/tests/KeyboardAutocorrectionTests.swift`
-- `openwhispr-mobile/src/__tests__/newFeature.test.ts`
-- `openwhispr-mobile/scripts/test-new-feature.sh`
-- `test/helpers/newFeature.test.js`
-
-The push guard/exporter enforce the following policy relative to the feature's merge
-base with `upstream/main` (not relative to its preceding feature commit):
-
-1. **Allowed:** new permanent test files, new fixtures, and new dedicated runners.
-   Tests introduced by this feature may be extended in subsequent feature commits.
-2. **Forbidden:** any change, deletion, rename or type change of a test, fixture or
-   runner already present in that upstream baseline. Even adding assertions to an
-   existing file is an existing-test change: put the new coverage in a separate file.
-3. **Forbidden:** temporary/debug probes and fork/headless-only tests. Known temporary
-   path tokens (`tmp`, `temp`, `temporary`, `scratch`, `headless`, `fork`) and explicit
-   comment markers such as `@temporary-test`, `@fork-only-test`, `@headless-only-test`
-   or `Temporary test ...` are rejected in test files. Ordinary use of temporary
-   directories *inside* a real permanent test is fine.
-4. Push checks also inspect **every intermediate commit**, including merge parents.
-   Reverting an existing-test change, removing a temporary marker, or deleting a
-   temporary test in a later commit does not make that PR history clean. A newly added
-   test must still exist at the branch tip; transient tests belong outside PR history.
-   Use a reviewed clean/squashed export when recovering such a branch, not a bypass.
-5. New tests must be regular files, not symlinks. Filenames are handled with Git's NUL
-   protocol so spaces/newlines cannot hide changes from the guard. Known test folders,
-   `.test.*`/`.spec.*`, `test_*`, Swift `*Tests.swift`, dedicated runners and test configs
-   are recognized. Existing upstream test directories also protect their fixtures.
-
-The root `tests/` and `fork-tests/` namespaces remain reserved for personal infrastructure;
-use upstream's regular `test/`, nested `tests/` or `__tests__/` layout for product coverage.
-Personal workflows remain excluded; this policy does not permit editing the existing
-upstream `mobile-ci.yml` or merging the `tests` branch into a feature branch.
-
-This is an enforceable **file/path/history** rule, not a semantic proof that a test is
-permanent or feature-relevant. Do not rename a probe to evade it; review new test content,
-its runner/registration, feature scope and the final PR diff. Untagged temporary code in
-ordinary product files cannot reliably be detected by a local guard.
-
-These rules apply prospectively to app/PR pushes as well as clean exports. In particular,
-the current `feat/ios-autocorrection` history edits existing `KeyboardTouchTests.swift`
-and `withKeyboardExtension.test.ts`; new pushes of that source are now refused. Its new
-standalone tests are allowed, but a future clean PR must move its extra coverage out of
-those existing test files and leave their upstream versions unchanged. Do not silently
-rewrite an existing remote feature branch just to satisfy the new policy.
-
-The guard reads `origin/tests:tests/export-upstream.py`, so publishing/fetching the `tests`
-branch activates the policy without changing the installed pre-push hook. Infrastructure
-maintenance on `tests` remains exempt from app-PR restrictions, and must never be exported
-upstream. Other worktrees and their working files must not be modified for guard maintenance.
+`--check-history` now only **displays** history for manual review; it does not enforce a
+test policy. The exporter includes changed/new tests and does not filter out temporary
+or fork files. It uses a temporary index, creates a single upstream-parented commit,
+never pushes or switches the checkout, and still refuses to overwrite an existing
+branch. Conflicts fail normally. Export is not an automated cleanliness certification.
 
 ## Security audit vs test harness errors
 

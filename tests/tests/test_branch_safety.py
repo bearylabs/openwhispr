@@ -53,26 +53,25 @@ class BranchSafetyTests(unittest.TestCase):
         self.assertEqual(self.push(self.base, 'main').returncode, 0)
         self.assertNotEqual(self.push(self.feature, 'main').returncode, 0)
 
-    def test_clean_feature_allowed_but_infrastructure_blocked(self):
+    def test_feature_content_is_not_classified_by_the_hook(self):
         self.assertEqual(self.push(self.feature, 'feat/keyboard').returncode, 0)
-        self.assertNotEqual(self.push(self.control, 'feat/keyboard').returncode, 0)
+        self.assertEqual(self.push(self.control, 'feat/keyboard').returncode, 0)
         self.assertEqual(self.push(self.control, 'tests').returncode, 0)
 
-    def test_removed_infrastructure_still_blocks_history(self):
+    def test_history_is_not_classified_by_the_hook(self):
         self.write('.github/workflows/minimal-keyboard-native-tests.yml', 'name: personal\n')
         self.commit('add personal CI')
         shutil.rmtree(self.root / '.github')
         cleaned = self.commit('remove personal CI')
         result = self.push(cleaned, 'feat/keyboard')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('commit history', result.stderr)
+        self.assertEqual(result.returncode, 0)
         self.assertEqual(self.push(cleaned, 'backup/old-main').returncode, 0)
 
-    def test_headless_markers_block_feature(self):
+    def test_headless_markers_require_manual_review_not_hook_rejection(self):
         self.write('openwhispr-mobile/plugins/keyboard-extension/tests/KeyboardTouchTests.swift',
                    'static var fullAccess = true\n')
         adapted = self.commit('headless adaptation')
-        self.assertNotEqual(self.push(adapted, 'feat/keyboard').returncode, 0)
+        self.assertEqual(self.push(adapted, 'feat/keyboard').returncode, 0)
 
     def test_direct_upstream_push_blocked(self):
         for url in ['https://github.com/OpenWhispr/openwhispr.git',

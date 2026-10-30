@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # openwhispr-tests-guard-v1
-# Local safety belt; does not modify upstream files or replace PR review.
+# Branch safety only. Test changes and PR scope are reviewed manually.
 set -euo pipefail
 remote=${1:?}
 url=${2:?}
@@ -11,23 +11,10 @@ case "$url" in
 esac
 while read -r local_ref local_sha remote_ref remote_sha; do
   [[ "$local_sha" != 0000000000000000000000000000000000000000 ]] || continue
-  case "$remote_ref" in
-    refs/heads/tests|refs/heads/backup/*|refs/heads/pr-assets/*) continue ;;
-    refs/heads/main)
-      if [[ "$local_sha" != "$(git rev-parse upstream/main)" ]]; then
-        echo 'REFUSED: fork main must equal the fetched upstream/main.' >&2
-        exit 1
-      fi
-      continue ;;
-  esac
-  if git show "$local_sha:tests/README.md" >/dev/null 2>&1; then
-    echo 'REFUSED: tests infrastructure must not be pushed to an app/PR branch.' >&2
-    exit 1
+  if [[ "$remote_ref" == refs/heads/main ]]; then
+    if [[ "$local_sha" != "$(git rev-parse upstream/main)" ]]; then
+      echo 'REFUSED: fork main must equal the fetched upstream/main.' >&2
+      exit 1
+    fi
   fi
-  guard=$(mktemp)
-  trap 'rm -f "$guard"' EXIT
-  git show origin/tests:tests/export-upstream.py > "$guard"
-  python3 "$guard" --source "$local_sha" --check-history
-  rm -f "$guard"
-  trap - EXIT
 done
