@@ -17,6 +17,43 @@ private enum KeyboardLog {
   }
 }
 
+/// One sizing contract for both the extension content and iOS's keyboard backdrop.
+/// Do not pin this view's height with a required constraint: the host supplies its
+/// own frame during presentation and must be able to negotiate the initial size.
+private final class KeyboardInputView: UIInputView {
+  private(set) var contentHeight: CGFloat = 0
+
+  override var intrinsicContentSize: CGSize {
+    CGSize(width: UIView.noIntrinsicMetric, height: contentHeight)
+  }
+
+  // UIInputView's default fitting also measures its arranged content. That can
+  // outweigh the intrinsic height (or retain an old expanded size) even though
+  // our toolbar/rows already contributed to contentHeight. The self-sizing host
+  // must receive exactly that height, independently of the provisional frame.
+  override func systemLayoutSizeFitting(_ targetSize: CGSize) -> CGSize {
+    CGSize(width: targetSize.width, height: contentHeight)
+  }
+
+  override func systemLayoutSizeFitting(
+    _ targetSize: CGSize,
+    withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+    verticalFittingPriority: UILayoutPriority
+  ) -> CGSize {
+    CGSize(width: targetSize.width, height: contentHeight)
+  }
+
+  override func sizeThatFits(_ size: CGSize) -> CGSize {
+    CGSize(width: size.width, height: contentHeight)
+  }
+
+  func updateContentHeight(_ height: CGFloat) {
+    guard contentHeight != height else { return }
+    contentHeight = height
+    invalidateIntrinsicContentSize()
+  }
+}
+
 /// Every colour the keyboard draws. Theme-dependent ones are dynamic: iOS applies both a
 /// light/dark switch and the host field's keyboardAppearance to the extension, so views
 /// restyle with no code. (Overriding the style from textDocumentProxy.keyboardAppearance
@@ -1186,7 +1223,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var keysBuiltWithGlobe = false
   private var rootHeightConstraint: NSLayoutConstraint?
   private var topBarHeightConstraint: NSLayoutConstraint?
-  private var keyboardHeightConstraint: NSLayoutConstraint?
+  private var keyboardInputView: KeyboardInputView { view as! KeyboardInputView }
   private var rowHeightConstraints: [NSLayoutConstraint] = []
   private var isRemoteRecordingActive = false
   private var isDarwinStartPending = false
@@ -1295,9 +1332,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   override func loadView() {
-    // Let the host size the entire keyboard from our height constraint, rather
-    // than retaining its default typing-keyboard frame around the compact bar.
-    let inputView = UIInputView(frame: .zero, inputViewStyle: .keyboard)
+    // Let the host size the entire keyboard from its intrinsic content height,
+    // rather than retaining a default typing-keyboard frame around the compact bar.
+    let inputView = KeyboardInputView(frame: .zero, inputViewStyle: .keyboard)
     inputView.allowsSelfSizing = true
     view = inputView
   }
@@ -1332,19 +1369,15 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       || showsFullAccessPanel
     let baseHeight = needsCanvas ? metrics.keyboardHeight : typingLayoutHeight
     let keyboardHeight = baseHeight + (showsCardHeight ? Metrics.agentReviewExtraHeight : 0)
-    rootHeightConstraint?.constant = typingLayoutHeight
-
-    if let keyboardHeightConstraint {
-      keyboardHeightConstraint.constant = keyboardHeight
-    } else {
-      let constraint = view.heightAnchor.constraint(equalToConstant: keyboardHeight)
-      // This is the host's sizing contract, not a content-layout preference.
-      // A yielding constraint can leave the system's full-height frame intact.
-      constraint.priority = .required
-      constraint.isActive = true
-      keyboardHeightConstraint = constraint
+    if rootHeightConstraint?.constant != typingLayoutHeight {
+      rootHeightConstraint?.constant = typingLayoutHeight
     }
-    preferredContentSize = CGSize(width: view.bounds.width, height: keyboardHeight)
+
+    keyboardInputView.updateContentHeight(keyboardHeight)
+    let requestedSize = CGSize(width: layoutWidth, height: keyboardHeight)
+    guard preferredContentSize != requestedSize else { return }
+    preferredContentSize = requestedSize
+    KeyboardLog.echo("Keyboard size requested=\(requestedSize) actual=\(view.bounds.size)")
   }
 
   override func textDidChange(_ textInput: UITextInput?) {
@@ -1359,6 +1392,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   // textDidChange when the keyboard opens: shift and the return key follow the field here.
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
+    refreshMetricsIfNeeded()
     refreshMinimalKeyboardPreference()
     noteFieldReport()
     syncShiftWithContextIfNeeded()
@@ -1656,7 +1690,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     rootHeightConstraint = rootStack.heightAnchor.constraint(equalToConstant: metrics.keyboardHeight)
     rootHeightConstraint?.priority = UILayoutPriority(999)
     let rootTopConstraint = rootStack.topAnchor.constraint(equalTo: view.topAnchor)
-    rootTopConstraint.priority = .defaultHigh
+    // The input view's intrinsic height wins over this cosmetic top alignment,
+    // including when a review card reserves extra space above the typing rows.
+    rootTopConstraint.priority = UILayoutPriority(249)
 
     NSLayoutConstraint.activate([
       rootStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
