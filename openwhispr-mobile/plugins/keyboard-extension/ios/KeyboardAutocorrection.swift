@@ -26,7 +26,7 @@ enum KeyboardCorrectionRules {
   static func isWord(_ word: String) -> Bool {
     let lower = word.lowercased()
     let alphabet = Set("abcdefghijklmnopqrstuvwxyzäöüß")
-    return (5...20).contains(word.count)
+    return (3...20).contains(word.count)
       && lower.allSatisfy { alphabet.contains($0) }
       && word.unicodeScalars.count == word.count
       && (word == lower || word == String(lower.prefix(1)).uppercased() + lower.dropFirst())
@@ -36,13 +36,31 @@ enum KeyboardCorrectionRules {
     guard isWord(word) else { return nil }
     let source = Array(word)
     let candidates = Set(suggestions).filter { candidate in
-      guard isWord(candidate), candidate.count == word.count,
-            candidate.first == word.first, candidate.last == word.last else { return false }
+      guard isWord(candidate),
+            (word == word.lowercased()) == (candidate == candidate.lowercased()) else { return false }
       let target = Array(candidate)
-      let changed = source.indices.filter { source[$0] != target[$0] }
-      guard changed.count == 2, changed[1] == changed[0] + 1 else { return false }
-      return source[changed[0]] == target[changed[1]] && source[changed[1]] == target[changed[0]]
+      if source.count == target.count {
+        let changed = source.indices.filter { source[$0] != target[$0] }
+        // Adjacent swaps may now include the first or last letter, even in short words.
+        if changed.count == 2, changed[1] == changed[0] + 1,
+           source[changed[0]] == target[changed[1]], source[changed[1]] == target[changed[0]] {
+          return true
+        }
+        // Still avoid ordinary substitutions in very short words.
+        return source.count >= 4 && changed.count == 1
+      }
+      guard min(source.count, target.count) >= 4,
+            abs(source.count - target.count) == 1 else { return false }
+      let longer = source.count > target.count ? source : target
+      let shorter = source.count > target.count ? target : source
+      // One extra/missing Character, not a UTF-16 code unit. Check only the first
+      // mismatch; skipping any other position cannot make the two sequences equal.
+      let mismatch = shorter.indices.first { longer[$0] != shorter[$0] } ?? shorter.count
+      var withoutExtra = longer
+      withoutExtra.remove(at: mismatch)
+      return withoutExtra == shorter
     }
+    // Ambiguous nearby words remain untouched, irrespective of provider ranking.
     return candidates.count == 1 ? candidates.first : nil
   }
 }

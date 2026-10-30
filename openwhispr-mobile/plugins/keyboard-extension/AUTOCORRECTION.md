@@ -1,14 +1,17 @@
 # German autocorrection prototype
 
-## Enable / disable
+## Enabled by default
 
-**Off by default.** Touch and hold the keyboard's **space bar**, then choose **Enable**.
-The same menu offers **Disable** afterwards. This is an extension-local preference
-(`germanAutocorrectionPrototype` in its standard UserDefaults), not an account setting,
-not synced, and not dependent on Full Access. Dictation still needs Full Access as before.
-The menu and accessibility hint use `Localizable.xcstrings` with English, German,
-Spanish, French, Italian, Portuguese, Russian, Simplified and Traditional Chinese.
-Mobile currently has no JS translation layer; native UI uses Apple's string catalog.
+Autocorrection runs automatically in eligible fields when manually tapping space.
+There is no long-press menu, activation step or local opt-in preference. Any disabled
+preference saved by the earlier prototype is ignored. The removed menu's string catalog
+is no longer shipped. Full Access is not needed for correction; dictation still needs it.
+The host field's `.autocorrectionType == .no` and all safety exclusions remain respected.
+
+Context checks remain strict even with the expanded candidate rules below. If a host
+reports stale/missing context, or the German dictionary offers no eligible replacement,
+the prototype deliberately inserts an ordinary space. A lack of correction on a device
+still needs host/dictionary investigation; changing the default alone does not prove a fix.
 
 ## Deliberately small scope
 
@@ -19,8 +22,13 @@ Mobile currently has no JS translation layer; native UI uses Apple's string cata
   German variant. With no German dictionary, it returns no suggestions.
 - The complete original must be misspelled, and a replacement must pass the dictionary.
   Ranking first is not enough: `KeyboardCorrectionRules` requires exactly one distinct
-  candidate that swaps two adjacent **interior** characters, keeps first/last letters
-  and case, and contains 5–20 German alphabet letters. Example: `nciht` → `nicht`.
+  nearby candidate, preserving lowercase/title case and using 3–20 German alphabet letters.
+  Adjacent swaps now include word edges (`udn` → `und`, `nicth` → `nicht`). For words
+  with at least four letters on both sides, one wrong, missing or extra letter also
+  qualifies (`nucht` → `nicht`, `nich` → `nicht`, `Halllo` → `Hallo`). More than one
+  eligible proposal means no replacement, even when one is ranked first. Multiple edits,
+  case changes and one-letter substitutions in three-letter words remain excluded.
+  These broader rules may produce more false positives; immediately backspace to undo.
   Actual candidates depend on the OS dictionary; the prototype may deliberately do nothing.
 - Digits, punctuation, underscores, mixed/all caps, URL/email-like tokens, emoji and
   decomposed combining sequences are excluded. Words following punctuation are not
@@ -74,10 +82,11 @@ npm test -- --runInBand
 Jest automatically runs the Foundation-only Swift tests if `swiftc` is available and
 explicitly skips that test otherwise. The Swift tests cover conservative decisions,
 ambiguity, excluded tokens, Unicode, context invalidation, delayed reports and undo.
-The existing Catalyst controller regression suite now also covers opt-in, correction,
+The existing Catalyst controller regression suite now also covers default-on behavior
+(including an obsolete disabled preference), removal of the space long-press menu, correction,
 undo, recorrection suppression, double space, silent hosts, cursor changes, field guards,
 transcript exclusion and held delete. Existing shift, smart quote and layout checks remain.
-The plugin tests check Sources/Resources registration, copying and idempotent prebuild.
+The plugin tests check source registration, copying and idempotent prebuild.
 
 For a device build, configure your own bundle ID/scheme and signing team as described in
 [CONTRIBUTING.md](../../CONTRIBUTING.md#physical-ios-devices-and-forks), then:
@@ -88,11 +97,11 @@ npm run ios -- --device
 ```
 
 Select your team for the app, keyboard and activity extension targets in the generated
-Xcode workspace if needed. Both new Swift sources and the string catalog are registered
+Xcode workspace if needed. Both new Swift sources are registered
 in `withKeyboardExtension.js`; do not copy them manually into generated `ios/`.
 A native rebuild is required; a JS-only update is insufficient.
 
-## Validation performed in this Linux worktree
+## Initial validation performed in this Linux worktree
 
 - Node **24.22.1**, `npm ci --ignore-scripts --no-audit --no-fund`; lockfiles unchanged.
 - `npm test -- --runInBand`: **326 suites passed; 4,332 tests passed, 1 Swift test skipped**.
@@ -101,14 +110,17 @@ A native rebuild is required; a JS-only update is insufficient.
 - `npm run format` and `git diff --check`: passed.
 - Native rule/capitalization scripts: attempted, unavailable (`swiftc` not installed).
 - Catalyst regression runner: attempted, unavailable (requires macOS and Xcode).
-- **No Swift compilation, iOS build, simulator or iPhone testing was performed here.**
+- No local Swift compilation, iOS build or simulator testing was possible on Linux.
+- The initial opt-in revision (`7a4277d99`) subsequently built successfully via GitHub
+  Actions run `41077745294` and was installed on the iPhone. The user reported no visible
+  correction. That build does not validate the subsequent default-on revision.
 
 ## Required Mac / iPhone checks before relying on it
 
-1. Run the three native test commands above, then compile a clean prebuild. Confirm the
-   string catalog is compiled into the keyboard target and the menu is localized.
-2. Enable the extension in iOS Settings. In Notes, long-press space and enable the prototype.
-   Manually type `nciht` and space; if the installed German dictionary offers `nicht`,
+1. Run the three native test commands above, then compile a clean prebuild. Confirm
+   long-pressing space no longer opens the prototype menu.
+2. Enable the extension in iOS Settings and select it in Notes. Without any activation,
+   manually type `nciht` and space; if the installed German dictionary offers `nicht`,
    expect `nicht `. Immediately backspace → `nciht`; space → `nciht `; another space → `nciht. `.
 3. Test on at least Notes, Messages and a Safari textarea/contenteditable, with fast typing
    and delayed host updates. No correction is preferable to any wrong-location replacement.
@@ -118,6 +130,6 @@ A native rebuild is required; a JS-only update is insufficient.
    emoji surrounding a word, `ä/ö/ü/ß`, and decomposed accented characters. Exclusions stay intact.
 6. Dictate and insert an assistant answer containing a typo, then space: output stays unchanged.
    Verify smart quotes, shift, double-space period, ordinary/held/accelerated backspace,
-   landscape, and no lost/duplicated fast taps. Disable and reopen: preference stays off.
+   landscape, and no lost/duplicated fast taps. Dismiss and reopen: correction stays available.
 7. Where German is unavailable, typing must work without correction. Dictionary proposals
    and timing are OS-dependent and are not proven by the stub-provider controller tests.

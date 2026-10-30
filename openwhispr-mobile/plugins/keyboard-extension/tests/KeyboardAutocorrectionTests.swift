@@ -48,7 +48,31 @@ private enum KeyboardAutocorrectionTests {
       for: "grßoer", suggestions: ["großer"]) == "großer")
     check("no case changes", KeyboardCorrectionRules.replacement(
       for: "Nciht", suggestions: ["nicht"]) == nil)
-    for word in ["udn", "abcd", "hello_world", "abc123", "https://nciht", "a@b.de",
+    check("short end swap", KeyboardCorrectionRules.replacement(
+      for: "udn", suggestions: ["und"]) == "und")
+    check("first letter swap", KeyboardCorrectionRules.replacement(
+      for: "incht", suggestions: ["nicht"]) == "nicht")
+    check("last letter swap", KeyboardCorrectionRules.replacement(
+      for: "nicth", suggestions: ["nicht"]) == "nicht")
+    check("one wrong letter", KeyboardCorrectionRules.replacement(
+      for: "nucht", suggestions: ["nicht"]) == "nicht")
+    check("one missing letter", KeyboardCorrectionRules.replacement(
+      for: "nich", suggestions: ["nicht"]) == "nicht")
+    check("one extra letter", KeyboardCorrectionRules.replacement(
+      for: "Halllo", suggestions: ["Hallo"]) == "Hallo")
+    check("umlaut substitution", KeyboardCorrectionRules.replacement(
+      for: "Mödchen", suggestions: ["Mädchen"]) == "Mädchen")
+    check("ambiguous edit kinds", KeyboardCorrectionRules.replacement(
+      for: "nich", suggestions: ["nicht", "noch"]) == nil)
+    check("ranking does not resolve ambiguity", KeyboardCorrectionRules.replacement(
+      for: "nich", suggestions: ["noch", "nicht"]) == nil)
+    check("two edits excluded", KeyboardCorrectionRules.replacement(
+      for: "ncih", suggestions: ["nicht"]) == nil)
+    check("short substitution excluded", KeyboardCorrectionRules.replacement(
+      for: "unt", suggestions: ["und"]) == nil)
+    check("unchanged word excluded", KeyboardCorrectionRules.replacement(
+      for: "nicht", suggestions: ["nicht"]) == nil)
+    for word in ["ab", "a", "hello_world", "abc123", "https://nciht", "a@b.de",
                  "fooBar", "ALLCAPS", "👩🏽‍💻nciht", "Ma\u{308}dcehn", "a-bcd", "abc'd", "abc\u{200B}de"] {
       check("excluded token: \(word)", !KeyboardCorrectionRules.isWord(word))
     }
@@ -65,6 +89,19 @@ private enum KeyboardAutocorrectionTests {
     check("undo one shot", state.takeUndo(in: corrected) == nil)
     check("space after undo does not recorrect", state.correction(
       in: context("🙂 nciht", document: document), provider: provider) == nil)
+
+    // Length-changing edits must preserve the surrounding emoji and restore the full
+    // original, not delete a replacement-sized suffix from the original context.
+    for (original, replacement) in [("nich", "nicht"), ("Halllo", "Hallo")] {
+      (state, current) = typed(original, prefix: "🙂 ", document: document)
+      let variableEdit = state.correction(in: current, provider: StubProvider(words: [replacement]))!
+      check("length-changing candidate", variableEdit.replacement == replacement)
+      state.didCorrect(variableEdit)
+      let restored = state.takeUndo(in: context("🙂 " + replacement + " ", document: document))
+      check("length-changing undo", restored?.original == original)
+      check("length-changing undo suppresses recorrection", state.correction(
+        in: current, provider: StubProvider(words: [replacement])) == nil)
+    }
 
     let unsafe = [
       context(nil, document: document), context("nciht", after: nil, document: document),

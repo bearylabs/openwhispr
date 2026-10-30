@@ -18,18 +18,14 @@ const hasSwift = spawnSync('swiftc', ['--version']).status === 0;
   expect(result.stdout).toContain('checks passed');
 });
 
-test('all new native UI strings have translations in every supported language', () => {
-  const catalog = JSON.parse(fs.readFileSync(path.join(ios, 'Localizable.xcstrings'), 'utf8'));
+test('autocorrection needs no opt-in and the space-bar settings gesture is removed', () => {
   const controller = fs.readFileSync(path.join(ios, 'KeyboardViewController.swift'), 'utf8');
-  const keys = [...new Set(controller.match(/autocorrection\.[a-z]+/g))].filter((key) =>
-    ['title', 'body', 'enable', 'disable', 'cancel', 'hint'].some((name) =>
-      key.endsWith(`.${name}`),
-    ),
-  );
-  expect(keys).toHaveLength(6);
-  for (const key of keys) {
-    for (const language of ['en', 'de', 'es', 'fr', 'it', 'pt', 'ru', 'zh-Hans', 'zh-Hant']) {
-      expect(catalog.strings[key].localizations[language].stringUnit.value.trim()).not.toBe('');
-    }
-  }
+  expect(controller).not.toContain('germanAutocorrectionPrototype');
+  expect(controller).not.toContain('autocorrectionEnabled');
+  expect(controller).not.toContain('showAutocorrectionOptions');
+  expect(controller).not.toContain('spaceButton.addGestureRecognizer');
+  // Default-on must not bypass host restrictions or move correction into all insertions.
+  expect(controller).toContain('allowed: ordinaryField && !fieldHidesItsText');
+  expect(controller).toContain('proxy.autocorrectionType != .no');
+  expect(controller).toContain('!applyDoubleSpacePeriod() && !applyManualSpaceCorrection()');
 });

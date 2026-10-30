@@ -341,15 +341,13 @@ function expectKeyboardWiring(project: Project, keyboardTarget = KEYBOARD_TARGET
     'KeyboardCapitalization.swift',
     'KeyboardViewController.swift',
   ]);
-  expect(phaseFiles(project, keyboardTarget, 'PBXResourcesBuildPhase')).toEqual([
-    'Localizable.xcstrings',
-  ]);
+  expect(phaseFiles(project, keyboardTarget, 'PBXResourcesBuildPhase')).toEqual([]);
   expect(phaseFiles(project, APP_TARGET, 'PBXSourcesBuildPhase')).toEqual([]);
   expect(phaseFiles(project, APP_TARGET, 'PBXResourcesBuildPhase')).toEqual([]);
 }
 
 describe('withKeyboardExtension helpers', () => {
-  it('wires sources and translations into the keyboard target only', () => {
+  it('wires sources into the keyboard target only', () => {
     const project = parseProject(FIXTURE);
     ensureExtensionFiles(project, KEYBOARD_TARGET, ensureExtensionGroup(project));
 
@@ -458,7 +456,7 @@ describe('withKeyboardExtension mods', () => {
     expect(keyboardTarget).toBeDefined();
     expectKeyboardWiring(result.modResults, keyboardTarget);
     expect(phaseCount(result.modResults, keyboardTarget!, 'PBXSourcesBuildPhase')).toBe(1);
-    expect(phaseCount(result.modResults, keyboardTarget!, 'PBXResourcesBuildPhase')).toBe(1);
+    expect(phaseCount(result.modResults, keyboardTarget!, 'PBXResourcesBuildPhase')).toBe(0);
     expect(embeddedAppexCount(result.modResults)).toBe(1);
   });
 
@@ -503,7 +501,7 @@ describe('withKeyboardExtension mods', () => {
     const project = parseProject(fs.readFileSync(file, 'utf8'));
     expectKeyboardWiring(project);
     expect(phaseCount(project, KEYBOARD_TARGET, 'PBXSourcesBuildPhase')).toBe(1);
-    expect(phaseCount(project, KEYBOARD_TARGET, 'PBXResourcesBuildPhase')).toBe(1);
+    expect(phaseCount(project, KEYBOARD_TARGET, 'PBXResourcesBuildPhase')).toBe(0);
   });
 
   it('repairs a project whose keyboard group CocoaPods rewrote without a name', async () => {
@@ -536,7 +534,6 @@ describe('withKeyboardExtension mods', () => {
       'KeyboardAutocorrection.swift',
       'KeyboardCapitalization.swift',
       'KeyboardViewController.swift',
-      'Localizable.xcstrings',
     ]);
     expect(groupChildNames(project, 'B30000000000000000000004')).toEqual([]);
   });

@@ -149,6 +149,9 @@ private extension KeyboardViewController {
       textDidChange(nil)
     }
   }
+  var touchTestSpaceHasLongPress: Bool {
+    spaceButton?.gestureRecognizers?.contains { $0 is UILongPressGestureRecognizer } == true
+  }
   func touchTestTapSpace() { handleSpaceTapped() }
   func touchTestTapReturn() { handleReturnTapped() }
   func touchTestTapDelete() { handleBackspaceTapped() }
@@ -475,7 +478,8 @@ private enum KeyboardTouchTests {
   }
 
   private struct CorrectionStub: KeyboardCorrectionProvider {
-    func suggestions(for word: String) -> [String] { ["nicht"] }
+    var words = ["nicht"]
+    func suggestions(for word: String) -> [String] { words }
   }
 
   @MainActor
@@ -486,9 +490,8 @@ private enum KeyboardTouchTests {
       if let previous { UserDefaults.standard.set(previous, forKey: key) }
       else { UserDefaults.standard.removeObject(forKey: key) }
     }
-    func keyboard(enabled: Bool = true, reports: Bool = true) -> KeyboardViewController {
+    func keyboard(reports: Bool = true) -> KeyboardViewController {
       TestEnvironment.reset()
-      UserDefaults.standard.set(enabled, forKey: key)
       let proxy = TestEnvironment.proxy
       proxy.documentContextBeforeInput = ""
       proxy.documentContextAfterInput = ""
@@ -497,21 +500,40 @@ private enum KeyboardTouchTests {
       controller.touchTestSetProvider(CorrectionStub())
       return controller
     }
-    var controller = keyboard(enabled: false)
+    UserDefaults.standard.removeObject(forKey: key)
+    var controller = keyboard()
     controller.touchTestTypeWord("nciht")
     controller.touchTestTapSpace()
-    checks.check("correction is opt-in", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+    checks.check("correction is enabled without a preference", TestEnvironment.proxy.documentContextBeforeInput == "nicht ")
+    checks.check("space has no long-press options", !controller.touchTestSpaceHasLongPress)
 
+    // A previous installation's disabled opt-in must not silently keep the feature off.
+    UserDefaults.standard.set(false, forKey: key)
     controller = keyboard()
     controller.touchTestTypeWord("nciht")
     controller.touchTestTapSpace()
-    checks.check("manual space corrects unique swap", TestEnvironment.proxy.documentContextBeforeInput == "nicht ")
+    checks.check("manual space corrects despite obsolete disabled preference", TestEnvironment.proxy.documentContextBeforeInput == "nicht ")
     controller.touchTestTapDelete()
     checks.check("immediate backspace restores original", TestEnvironment.proxy.documentContextBeforeInput == "nciht")
     controller.touchTestTapSpace()
     checks.check("undo prevents immediate recorrection", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
     controller.touchTestTapSpace()
     checks.check("double space still makes period", TestEnvironment.proxy.documentContextBeforeInput == "nciht. ")
+
+    controller = keyboard()
+    controller.touchTestTypeWord("nich")
+    controller.touchTestTapSpace()
+    checks.check("missing letter correction", TestEnvironment.proxy.documentContextBeforeInput == "nicht ")
+    controller.touchTestTapDelete()
+    checks.check("missing letter undo", TestEnvironment.proxy.documentContextBeforeInput == "nich")
+    controller.touchTestTapSpace()
+    checks.check("missing letter undo suppresses recorrection", TestEnvironment.proxy.documentContextBeforeInput == "nich ")
+
+    controller = keyboard()
+    controller.touchTestSetProvider(CorrectionStub(words: ["nicht", "noch"]))
+    controller.touchTestTypeWord("nich")
+    controller.touchTestTapSpace()
+    checks.check("ambiguous nearby words unchanged", TestEnvironment.proxy.documentContextBeforeInput == "nich ")
 
     controller = keyboard()
     controller.touchTestTypeWord("nciht")

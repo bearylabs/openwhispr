@@ -20,11 +20,9 @@ const EXTENSION_FILES = [
   { name: 'KeyboardCapitalization.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
   { name: 'KeyboardAutocorrection.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
   { name: 'GermanTextCheckerProvider.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
-  { name: 'Localizable.xcstrings', fileType: 'text.json.xcstrings', phase: 'Resources' },
 ];
 const BUILD_PHASE_ISA = {
   Sources: 'PBXSourcesBuildPhase',
-  Resources: 'PBXResourcesBuildPhase',
 };
 
 function firstScheme(value) {

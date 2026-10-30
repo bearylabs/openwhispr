@@ -1128,12 +1128,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var appliedBottomRowLayout: BottomRowLayout?
   /// What the return key last drew, so a keystroke that doesn't change it skips the redraw.
   private var appliedReturnKeyState: ReturnKeyState?
-  // Manual typing only; the opt-in is local to the keyboard extension.
+  // Manual typing only; enabled by default, subject to the host field’s safety gates.
   private var autocorrection = KeyboardAutocorrection()
   private lazy var correctionProvider: KeyboardCorrectionProvider = GermanTextCheckerProvider()
-  private var autocorrectionEnabled: Bool {
-    UserDefaults.standard.bool(forKey: "germanAutocorrectionPrototype")
-  }
   /// The field the keyboard last typed into, and the last one seen reporting text.
   private var typedDocument: UUID?
   private var reportingDocument: UUID?
@@ -1573,7 +1570,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     return KeyboardCorrectionContext(
       document: proxy.documentIdentifier, before: proxy.documentContextBeforeInput,
       after: proxy.documentContextAfterInput, selection: proxy.selectedText,
-      allowed: autocorrectionEnabled && ordinaryField && !fieldHidesItsText
+      allowed: ordinaryField && !fieldHidesItsText
         && proxy.isSecureTextEntry != true && proxy.autocorrectionType != .no)
   }
 
@@ -1600,24 +1597,6 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     typeText(edit.replacement + " ")
     autocorrection.didCorrect(edit)
     return true
-  }
-
-  @objc private func showAutocorrectionOptions(_ gesture: UILongPressGestureRecognizer) {
-    guard gesture.state == .began else { return }
-    autocorrection.invalidate()
-    let alert = UIAlertController(
-      title: NSLocalizedString("autocorrection.title", comment: ""),
-      message: NSLocalizedString("autocorrection.body", comment: ""), preferredStyle: .alert)
-    let key = autocorrectionEnabled ? "autocorrection.disable" : "autocorrection.enable"
-    alert.addAction(UIAlertAction(title: NSLocalizedString(key, comment: ""), style: .default) {
-      [weak self] _ in
-      guard let self else { return }
-      UserDefaults.standard.set(!self.autocorrectionEnabled, forKey: "germanAutocorrectionPrototype")
-      self.autocorrection.invalidate()
-    })
-    alert.addAction(UIAlertAction(
-      title: NSLocalizedString("autocorrection.cancel", comment: ""), style: .cancel))
-    present(alert, animated: true)
   }
 
   private func applyDoubleSpacePeriod() -> Bool {
@@ -3114,9 +3093,6 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     spaceButton.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
     // Blank, as Apple's is; the OpenWhispr logo sits in the dictation pill.
     spaceButton.accessibilityLabel = "space"
-    spaceButton.accessibilityHint = NSLocalizedString("autocorrection.hint", comment: "")
-    spaceButton.addGestureRecognizer(UILongPressGestureRecognizer(
-      target: self, action: #selector(showAutocorrectionOptions(_:))))
     self.spaceButton = spaceButton
 
     let shortcuts = (0..<3).map { _ in
