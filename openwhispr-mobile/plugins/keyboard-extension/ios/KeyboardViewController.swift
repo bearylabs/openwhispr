@@ -1128,6 +1128,12 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var appliedBottomRowLayout: BottomRowLayout?
   /// What the return key last drew, so a keystroke that doesn't change it skips the redraw.
   private var appliedReturnKeyState: ReturnKeyState?
+  // Manual typing only; the opt-in is local to the keyboard extension.
+  private var autocorrection = KeyboardAutocorrection()
+  private lazy var correctionProvider: KeyboardCorrectionProvider = GermanTextCheckerProvider()
+  private var autocorrectionEnabled: Bool {
+    UserDefaults.standard.bool(forKey: "germanAutocorrectionPrototype")
+  }
   /// The field the keyboard last typed into, and the last one seen reporting text.
   private var typedDocument: UUID?
   private var reportingDocument: UUID?
@@ -1298,8 +1304,16 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     preferredContentSize = CGSize(width: view.bounds.width, height: keyboardHeight)
   }
 
+  override func textWillChange(_ textInput: UITextInput?) {
+    super.textWillChange(textInput)
+    // A host edit can be announced before its new context is readable. The old matching
+    // snapshot must not authorize a replacement in that interval.
+    autocorrection.invalidate()
+  }
+
   override func textDidChange(_ textInput: UITextInput?) {
     super.textDidChange(textInput)
+    autocorrection.reconcile(correctionContext())
     noteFieldReport()
     syncShiftWithContextIfNeeded()
     refreshFieldAwareKeys()
@@ -1310,6 +1324,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   // textDidChange when the keyboard opens: shift and the return key follow the field here.
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
+    autocorrection.invalidate()
     noteFieldReport()
     syncShiftWithContextIfNeeded()
     refreshFieldAwareKeys()
@@ -1357,6 +1372,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   override func viewWillDisappear(_ animated: Bool) {
     super.viewWillDisappear(animated)
+    autocorrection.invalidate()
     logRecordMarker("viewWillDisappear")
     stopDeleteRepeating()
     issueResetTimer?.invalidate()
@@ -1383,7 +1399,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
     let insertion = layoutMode == .letters && isShiftEnabled ? output.uppercased() : output
     let text = smartQuoteSubstitution(for: insertion) ?? insertion
+    var nextCorrectionState = autocorrection
+    nextCorrectionState.manualInsertion(text, in: correctionContext())
     typeText(text)
+    autocorrection = nextCorrectionState
     if layoutMode != .letters {
       // Apple's apostrophe returns to letters at once ("rock 'n' roll", "'90s").
       if output == "'" { returnToLetters() } else { typedOnSymbolPage = true }
@@ -1447,7 +1466,16 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   @objc private func handleBackspaceTapped() {
     playKeyClick()
-    textDocumentProxy.deleteBackward()
+    if let edit = autocorrection.takeUndo(in: correctionContext()),
+       correctionContext() == undoContext(for: edit)
+    {
+      // Remove corrected word AND its space; restore the original without a delimiter.
+      // The next space cannot immediately correct it again: takeUndo cleared tracking.
+      for _ in 0..<(edit.replacement.count + 1) { textDocumentProxy.deleteBackward() }
+      typeText(edit.original)
+    } else {
+      textDocumentProxy.deleteBackward()
+    }
     // "Hello. W" ⌫ starts a sentence again.
     syncShiftWithContextIfNeeded()
     refreshAfterEdit()
@@ -1488,7 +1516,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   @objc private func handleSpaceTapped() {
     playKeyClick()
-    if !applyDoubleSpacePeriod() {
+    if !applyDoubleSpacePeriod() && !applyManualSpaceCorrection() {
       typeText(" ")
     }
     if layoutMode != .letters && typedOnSymbolPage { returnToLetters() }
@@ -1515,12 +1543,81 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   @objc private func handleNextKeyboardTapped() {
+    autocorrection.invalidate()
     playKeyClick()
     advanceToNextInputMode()
   }
 
   @objc private func handleInputModeListButton(_ sender: UIButton, forEvent event: UIEvent) {
+    autocorrection.invalidate()
     handleInputModeList(from: sender, with: event)
+  }
+
+  override func selectionWillChange(_ textInput: UITextInput?) {
+    super.selectionWillChange(textInput)
+    autocorrection.invalidate()
+  }
+
+  override func selectionDidChange(_ textInput: UITextInput?) {
+    super.selectionDidChange(textInput)
+    autocorrection.invalidate()
+  }
+
+  private func correctionContext() -> KeyboardCorrectionContext {
+    let proxy = textDocumentProxy
+    let ordinaryField: Bool
+    switch proxy.keyboardType ?? .default {
+    case .default: ordinaryField = true
+    default: ordinaryField = false
+    }
+    return KeyboardCorrectionContext(
+      document: proxy.documentIdentifier, before: proxy.documentContextBeforeInput,
+      after: proxy.documentContextAfterInput, selection: proxy.selectedText,
+      allowed: autocorrectionEnabled && ordinaryField && !fieldHidesItsText
+        && proxy.isSecureTextEntry != true && proxy.autocorrectionType != .no)
+  }
+
+  private func undoContext(for edit: KeyboardAutocorrection.Edit) -> KeyboardCorrectionContext {
+    let prefix = String((edit.context.before ?? "").dropLast(edit.original.count))
+    return KeyboardCorrectionContext(
+      document: edit.context.document, before: prefix + edit.replacement + " ",
+      after: edit.context.after, selection: edit.context.selection, allowed: edit.context.allowed)
+  }
+
+  private func applyManualSpaceCorrection() -> Bool {
+    let context = correctionContext()
+    guard context.isSafe else {
+      autocorrection.invalidate()
+      return false
+    }
+    guard let edit = autocorrection.correction(in: context, provider: correctionProvider),
+          // UITextChecker may take time. Re-read the proxy immediately before any deletion.
+          correctionContext() == edit.context else {
+      autocorrection.invalidate()
+      return false
+    }
+    for _ in edit.original { textDocumentProxy.deleteBackward() }
+    typeText(edit.replacement + " ")
+    autocorrection.didCorrect(edit)
+    return true
+  }
+
+  @objc private func showAutocorrectionOptions(_ gesture: UILongPressGestureRecognizer) {
+    guard gesture.state == .began else { return }
+    autocorrection.invalidate()
+    let alert = UIAlertController(
+      title: NSLocalizedString("autocorrection.title", comment: ""),
+      message: NSLocalizedString("autocorrection.body", comment: ""), preferredStyle: .alert)
+    let key = autocorrectionEnabled ? "autocorrection.disable" : "autocorrection.enable"
+    alert.addAction(UIAlertAction(title: NSLocalizedString(key, comment: ""), style: .default) {
+      [weak self] _ in
+      guard let self else { return }
+      UserDefaults.standard.set(!self.autocorrectionEnabled, forKey: "germanAutocorrectionPrototype")
+      self.autocorrection.invalidate()
+    })
+    alert.addAction(UIAlertAction(
+      title: NSLocalizedString("autocorrection.cancel", comment: ""), style: .cancel))
+    present(alert, animated: true)
   }
 
   private func applyDoubleSpacePeriod() -> Bool {
@@ -2402,6 +2499,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   private func typeText(_ text: String) {
+    // All non-manual insertion paths (especially dictation/agent) abandon tracking.
+    autocorrection.invalidate()
     textDocumentProxy.insertText(text)
     typedDocument = textDocumentProxy.documentIdentifier
   }
@@ -3015,6 +3114,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     spaceButton.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
     // Blank, as Apple's is; the OpenWhispr logo sits in the dictation pill.
     spaceButton.accessibilityLabel = "space"
+    spaceButton.accessibilityHint = NSLocalizedString("autocorrection.hint", comment: "")
+    spaceButton.addGestureRecognizer(UILongPressGestureRecognizer(
+      target: self, action: #selector(showAutocorrectionOptions(_:))))
     self.spaceButton = spaceButton
 
     let shortcuts = (0..<3).map { _ in
@@ -3170,6 +3272,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   private func startDeleteRepeating() {
+    autocorrection.invalidate()
     stopDeleteRepeating()
     deleteRepeatCount = 0
     performRepeatingDelete()

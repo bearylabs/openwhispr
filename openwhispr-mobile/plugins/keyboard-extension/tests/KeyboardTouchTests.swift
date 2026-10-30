@@ -52,13 +52,20 @@ private final class TestTextProxy: NSObject, UITextDocumentProxy {
   var autocapitalizationType: UITextAutocapitalizationType = .sentences
   var smartQuotesType: UITextSmartQuotesType = .default
   var isSecureTextEntry = false
+  var autocorrectionType: UITextAutocorrectionType = .default
+  var reportsOwnEdits = false
   private(set) var inserted = [String]()
 
   func adjustTextPosition(byCharacterOffset offset: Int) {}
   func setMarkedText(_ markedText: String, selectedRange: NSRange) {}
   func unmarkText() {}
-  func insertText(_ text: String) { inserted.append(text) }
-  func deleteBackward() {}
+  func insertText(_ text: String) {
+    inserted.append(text)
+    if reportsOwnEdits { documentContextBeforeInput = (documentContextBeforeInput ?? "") + text }
+  }
+  func deleteBackward() {
+    if reportsOwnEdits { documentContextBeforeInput = documentContextBeforeInput.map { String($0.dropLast()) } }
+  }
 }
 
 private enum TestPage {
@@ -132,8 +139,20 @@ private extension KeyboardViewController {
   func touchTestTextDidChange() { textDidChange(nil) }
   func touchTestInsertTranscript(_ text: String) { insertSmartText(text) }
   func touchTestTapLetter(_ index: Int) { handleCharacterKeyTapped(characterButtons[index]) }
+  func touchTestSetProvider(_ provider: KeyboardCorrectionProvider) { correctionProvider = provider }
+  func touchTestTypeWord(_ word: String) {
+    isShiftEnabled = false
+    for character in word {
+      let key = KeyButton(type: .system)
+      key.output = String(character)
+      handleCharacterKeyTapped(key)
+      textDidChange(nil)
+    }
+  }
+  func touchTestTapSpace() { handleSpaceTapped() }
   func touchTestTapReturn() { handleReturnTapped() }
   func touchTestTapDelete() { handleBackspaceTapped() }
+  func touchTestBeginRepeatedDelete() { startDeleteRepeating(); stopDeleteRepeating() }
   func touchTestTapMode() { handleModeKeyTapped() }
   func touchTestQuote(_ character: String) -> String? { smartQuoteSubstitution(for: character) }
 }
@@ -161,6 +180,7 @@ private enum KeyboardTouchTests {
   static func main() {
     var checks = TouchChecks()
     TestEnvironment.install()
+    checkAutocorrection(&checks)
     checkSyntheticRows(&checks)
     checkEdgeTies(&checks)
     checkOtherControls(&checks)
@@ -452,6 +472,102 @@ private enum KeyboardTouchTests {
 
     let stripHalf = CGPoint(x: root.bounds.midX, y: top - 0.5)
     checks.check("\(layout): the strip's half of the gap takes no key taps", !(root.hitTest(stripHalf, with: nil) is KeyButton))
+  }
+
+  private struct CorrectionStub: KeyboardCorrectionProvider {
+    func suggestions(for word: String) -> [String] { ["nicht"] }
+  }
+
+  @MainActor
+  static func checkAutocorrection(_ checks: inout TouchChecks) {
+    let key = "germanAutocorrectionPrototype"
+    let previous = UserDefaults.standard.object(forKey: key)
+    defer {
+      if let previous { UserDefaults.standard.set(previous, forKey: key) }
+      else { UserDefaults.standard.removeObject(forKey: key) }
+    }
+    func keyboard(enabled: Bool = true, reports: Bool = true) -> KeyboardViewController {
+      TestEnvironment.reset()
+      UserDefaults.standard.set(enabled, forKey: key)
+      let proxy = TestEnvironment.proxy
+      proxy.documentContextBeforeInput = ""
+      proxy.documentContextAfterInput = ""
+      proxy.reportsOwnEdits = reports
+      let controller = KeyboardViewController.makeLaidOutKeyboard(width: 402)
+      controller.touchTestSetProvider(CorrectionStub())
+      return controller
+    }
+    var controller = keyboard(enabled: false)
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    checks.check("correction is opt-in", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+
+    controller = keyboard()
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    checks.check("manual space corrects unique swap", TestEnvironment.proxy.documentContextBeforeInput == "nicht ")
+    controller.touchTestTapDelete()
+    checks.check("immediate backspace restores original", TestEnvironment.proxy.documentContextBeforeInput == "nciht")
+    controller.touchTestTapSpace()
+    checks.check("undo prevents immediate recorrection", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+    controller.touchTestTapSpace()
+    checks.check("double space still makes period", TestEnvironment.proxy.documentContextBeforeInput == "nciht. ")
+
+    controller = keyboard()
+    controller.touchTestTypeWord("nciht")
+    controller.selectionDidChange(nil)
+    controller.touchTestTapSpace()
+    checks.check("cursor change invalidates tracking", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+
+    controller = keyboard()
+    controller.touchTestTypeWord("nciht")
+    controller.textWillChange(nil)
+    controller.touchTestTapSpace()
+    checks.check("announced host edit rejects even matching stale context", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+
+    controller = keyboard()
+    controller.touchTestInsertTranscript("nciht")
+    controller.touchTestTapSpace()
+    checks.check("transcript is never corrected", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+
+    controller = keyboard(reports: false)
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    checks.check("silent host gets only a normal space", TestEnvironment.proxy.inserted == ["n", "c", "i", "h", "t", " "])
+
+    for field in [UIKeyboardType.URL, .emailAddress, .asciiCapable, .numberPad] {
+      controller = keyboard()
+      TestEnvironment.proxy.keyboardType = field
+      controller.touchTestTypeWord("nciht")
+      controller.touchTestTapSpace()
+      checks.check("technical field is unchanged", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+    }
+    controller = keyboard()
+    TestEnvironment.proxy.isSecureTextEntry = true
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    checks.check("password field is unchanged", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+    controller = keyboard()
+    controller.touchTestTypeWord("nciht")
+    TestEnvironment.proxy.selectedText = "selection"
+    controller.touchTestTapSpace()
+    checks.check("selection causes no correction", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+    controller = keyboard()
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    controller.touchTestBeginRepeatedDelete()
+    checks.check("long-press delete does not undo", TestEnvironment.proxy.documentContextBeforeInput == "nicht")
+    controller = keyboard()
+    TestEnvironment.proxy.autocorrectionType = .no
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    checks.check("host .no respected", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+    controller = keyboard()
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    TestEnvironment.proxy.documentContextBeforeInput = "external "
+    controller.touchTestTapDelete()
+    checks.check("unsafe undo is ordinary backspace", TestEnvironment.proxy.documentContextBeforeInput == "external")
   }
 
   /// An empty search field whose return key greys until something is typed.
