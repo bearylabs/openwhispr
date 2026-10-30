@@ -53,6 +53,28 @@ jobs:
           git fetch --no-tags https://github.com/OpenWhispr/openwhispr.git main:refs/remotes/upstream/main
           python3 tests/export-upstream.py --source origin/main
 
+  security:
+    name: Mobile dependency security gate
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: source/openwhispr-mobile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: source/openwhispr-mobile/.nvmrc
+      # An independent required gate, NOT an exception or a non-blocking check.
+      # Functional checks still run when an upstream dependency advisory fails.
+      - name: Reject high and critical dependency advisories
+        run: npx --yes --ignore-scripts --package=audit-ci@7.1.0 audit-ci --config audit-ci.json
+
   mobile:
     name: Mobile ${{ matrix.check }}
     needs: resolve
@@ -78,8 +100,6 @@ jobs:
           cache-dependency-path: source/openwhispr-mobile/package-lock.json
       - name: Validate dependency sources and integrity
         run: npx --yes --ignore-scripts --package=lockfile-lint@5.0.1 lockfile-lint --path package-lock.json --type npm --validate-https --allowed-hosts npm --validate-integrity
-      - name: Reject high and critical dependency advisories
-        run: npx --yes --ignore-scripts --package=audit-ci@7.1.0 audit-ci --config audit-ci.json
       - name: Install and apply reviewed patches
         run: |
           npm ci --ignore-scripts --no-audit --no-fund

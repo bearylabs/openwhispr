@@ -161,8 +161,22 @@ the final PR diff and commit list. Native/UI tests do not prove a PR is clean.
 
 ## Security audit vs test harness errors
 
+The advisory audit is an independent `Mobile dependency security gate` job. It
+uses the exact same resolved app SHA and the app's own audit policy. It has no
+`continue-on-error`, no baseline exception, and remains blocking: a red security
+job means the full suite failed and must not trigger an installable build.
+Static checks, Jest and bundling run independently so a security failure does not
+hide their results. A green functional job alone is not release approval.
+
+On 2026-10-30, feature `9f72a4812254c45c1734149dcf04a937ea918d94` and upstream
+`b9e9ebefac4b961456c269164a93ddfdd53438b9` have byte-identical mobile package
+manifests, lockfile, patches and audit policy. The feature audit blocks on
+`GHSA-qr28-fpjm-wq7f|expo-router>query-string>decode-uri-component`. Being inherited
+from upstream does not make a runtime DoS safe; do not allowlist it just to build
+the keyboard branch or merge the unrelated fix without scope approval.
+
 Do not silence the advisory audit to make tests pass. `GHSA-qr28-fpjm-wq7f` affected
-Expo Router's `decode-uri-component@0.2.2`. App commit `c1c152c72` backports the
+Expo Router's `decode-uri-component@0.2.2`. Historical app commit `c1c152c72` backports the
 single-pass 0.5.1 decoder while retaining its CommonJS/plus-sign contract. A scoped,
 expiring audit exception is paired with patch-package and timeout-based regression
 tests because npm audit does not recognize source patches. Review its expiry and
