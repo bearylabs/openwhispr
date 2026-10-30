@@ -108,6 +108,7 @@ private extension KeyboardViewController {
   static func checkPresentationGeometry(_ checks: inout TouchChecks) {
     TestEnvironment.reset()
     defer { TestEnvironment.reset() }
+    TestEnvironment.fullAccess = false
     TestEnvironment.proxy.documentContextBeforeInput = "PRIVATE_FIELD_TEXT_NOT_FOR_LOGS"
     let controller = makeLaidOutKeyboard(width: 402)
     let input = controller.keyboardInputView
