@@ -1,9 +1,20 @@
 diff --git a/openwhispr-mobile/plugins/keyboard-extension/ios/KeyboardViewController.swift b/openwhispr-mobile/plugins/keyboard-extension/ios/KeyboardViewController.swift
-index 4fd1ca3d9..af00d2297 100644
+index 6550a34c2..89a857b8c 100644
 --- a/openwhispr-mobile/plugins/keyboard-extension/ios/KeyboardViewController.swift
 +++ b/openwhispr-mobile/plugins/keyboard-extension/ios/KeyboardViewController.swift
-@@ -2598,6 +2598,12 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
-     applyKeyboardHeight()
+@@ -2548,9 +2548,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
+       let button = UIButton(type: .system)
+       button.setTitle(item.title, for: .normal)
+       button.addAction(UIAction { [weak self] _ in
+-        KeyboardHandoffProvider.shared.setTone(item.value)
+-        self?.closeCompactToneMenu()
+-        self?.refreshToneButton()
++        self?.selectCompactTone(item.value)
+       }, for: .touchUpInside)
+       compactToneMenu.addArrangedSubview(button)
+       return (item.value, button)
+@@ -2570,6 +2568,12 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
+     }
    }
  
 +  private func selectCompactTone(_ tone: String) {
@@ -12,22 +23,11 @@ index 4fd1ca3d9..af00d2297 100644
 +    refreshToneButton()
 +  }
 +
-   private func refreshToneButton() {
-     // isToneApplicable() fails open on a dead App Group — `guard let defaults`
-     // then `!= "0"` reads a live-but-empty suite as applicable — so the tone
-@@ -2655,9 +2661,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
-         button.setTitle((item.value == current ? "✓ " : "") + item.title, for: .normal)
-         button.isEnabled = applicable || item.value == "default"
-         button.addAction(UIAction { [weak self] _ in
--          KeyboardHandoffProvider.shared.setTone(item.value)
--          self?.closeCompactToneMenu()
--          self?.refreshToneButton()
-+          self?.selectCompactTone(item.value)
-         }, for: .touchUpInside)
-         compactToneMenu.addArrangedSubview(button)
-       }
+   private func closeCompactToneMenu() {
+     isCompactToneMenuShown = false
+     compactToneMenu.isHidden = true
 diff --git a/openwhispr-mobile/plugins/keyboard-extension/tests/KeyboardTouchTests.swift b/openwhispr-mobile/plugins/keyboard-extension/tests/KeyboardTouchTests.swift
-index d134a17c3..504b678f7 100644
+index 7ba61ae1b..58ada3366 100644
 --- a/openwhispr-mobile/plugins/keyboard-extension/tests/KeyboardTouchTests.swift
 +++ b/openwhispr-mobile/plugins/keyboard-extension/tests/KeyboardTouchTests.swift
 @@ -10,7 +10,8 @@ private enum TestEnvironment {
@@ -49,9 +49,9 @@ index d134a17c3..504b678f7 100644
      proxy = TestTextProxy()
    }
  }
-@@ -259,7 +260,12 @@ private extension KeyboardViewController {
+@@ -196,7 +197,12 @@ private extension KeyboardViewController {
      checks.check("ending recording restores compact height",
-       controller.keyboardInputView.contentHeight == compactHeight)
+       controller.keyboardHeightConstraint?.constant == compactHeight)
  
 -    controller.toneButton.sendActions(for: .touchUpInside)
 +    // The headless Catalyst runner has no UIApplication event dispatch.
@@ -63,7 +63,7 @@ index d134a17c3..504b678f7 100644
      layout()
      checks.check("tone menu expands minimal keyboard",
        controller.view.bounds.height == compactHeight + Self.compactToneMenuHeight
-@@ -269,7 +275,7 @@ private extension KeyboardViewController {
+@@ -206,7 +212,7 @@ private extension KeyboardViewController {
      checks.check("compact menu offers the formal tone", formal != nil)
      if let formal {
        checkTappable("formal tone", formal)
@@ -72,7 +72,7 @@ index d134a17c3..504b678f7 100644
      }
      layout()
      checks.check("tone selection persists to App Group",
-@@ -277,13 +283,13 @@ private extension KeyboardViewController {
+@@ -218,13 +224,13 @@ private extension KeyboardViewController {
      checks.check("tone selection collapses keyboard",
        controller.view.bounds.height == compactHeight && controller.compactToneMenu.isHidden)
  
