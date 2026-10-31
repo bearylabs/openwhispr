@@ -5,6 +5,13 @@ private struct StubProvider: KeyboardCorrectionProvider {
   func suggestions(for word: String) -> [String] { words }
 }
 
+/// A provider for a chosen selection, as the controller builds from the app's setting.
+private struct SelectionProvider: KeyboardCorrectionProvider {
+  var words: [String]
+  var letters: Set<Character>
+  func suggestions(for word: String) -> [String] { words }
+}
+
 @main
 private enum KeyboardAutocorrectionTests {
   static var count = 0
@@ -72,6 +79,47 @@ private enum KeyboardAutocorrectionTests {
       for: "unt", suggestions: ["und"]) == nil)
     check("unchanged word excluded", KeyboardCorrectionRules.replacement(
       for: "nicht", suggestions: ["nicht"]) == nil)
+    // English goes through the same rules as German.
+    check("english short swap", KeyboardCorrectionRules.replacement(
+      for: "teh", suggestions: ["the", "ten", "tech"]) == "the")
+    check("english inner swap", KeyboardCorrectionRules.replacement(
+      for: "recieve", suggestions: ["receive", "recite"]) == "receive")
+    check("english missing letter", KeyboardCorrectionRules.replacement(
+      for: "becuse", suggestions: ["because"]) == "because")
+    check("english title case kept", KeyboardCorrectionRules.replacement(
+      for: "Thsi", suggestions: ["This", "this"]) == "This")
+    check("german and english proposals together stay unique", KeyboardCorrectionRules.replacement(
+      for: "nciht", suggestions: ["nicht", "night", "niche"]) == "nicht")
+    check("one proposal per language is ambiguous", KeyboardCorrectionRules.replacement(
+      for: "Bnad", suggestions: ["Band", "Brad"]) == nil)
+    check("english contraction excluded", !KeyboardCorrectionRules.isWord("don't"))
+
+    // The app's language selection ("de,en" in the App Group).
+    let german = KeyboardCorrectionLanguage.german, english = KeyboardCorrectionLanguage.english
+    check("missing selection is German and English",
+          KeyboardCorrectionLanguage.selection(from: nil) == [german, english])
+    check("empty selection is the default", KeyboardCorrectionLanguage.selection(from: "") == [german, english])
+    check("unknown-only selection is the default",
+          KeyboardCorrectionLanguage.selection(from: "xx, zz") == [german, english])
+    check("single language", KeyboardCorrectionLanguage.selection(from: "en") == [english])
+    check("order kept, spacing and case tolerated, duplicates and unknown dropped",
+          KeyboardCorrectionLanguage.selection(from: " EN ,xx,de,en") == [english, german])
+    check("selection capped", KeyboardCorrectionLanguage.selection(
+      from: Array(repeating: "de,en", count: 5).joined(separator: ",")).count
+      <= KeyboardCorrectionLanguage.maxSelected)
+    check("every language has a unique code",
+          Set(KeyboardCorrectionLanguage.all.map(\.code)).count == KeyboardCorrectionLanguage.all.count)
+    let englishLetters = KeyboardCorrectionLanguage.letters(of: [english])
+    let germanLetters = KeyboardCorrectionLanguage.letters(of: [german])
+    check("english-only leaves umlaut words alone", KeyboardCorrectionRules.replacement(
+      for: "Mädcehn", suggestions: ["Mädchen"], letters: englishLetters) == nil)
+    check("english-only rejects an umlaut proposal", KeyboardCorrectionRules.replacement(
+      for: "nciht", suggestions: ["nicht", "nücht"], letters: englishLetters) == "nicht")
+    check("german-only keeps umlauts", KeyboardCorrectionRules.replacement(
+      for: "Mädcehn", suggestions: ["Mädchen"], letters: germanLetters) == "Mädchen")
+    check("german-only still corrects plain words", KeyboardCorrectionRules.replacement(
+      for: "udn", suggestions: ["und"], letters: germanLetters) == "und")
+    check("no dictionary means no letters", !KeyboardCorrectionRules.isWord("nciht", letters: []))
     for word in ["ab", "a", "hello_world", "abc123", "https://nciht", "a@b.de",
                  "fooBar", "ALLCAPS", "👩🏽‍💻nciht", "Ma\u{308}dcehn", "a-bcd", "abc'd", "abc\u{200B}de"] {
       check("excluded token: \(word)", !KeyboardCorrectionRules.isWord(word))
@@ -189,6 +237,17 @@ private enum KeyboardAutocorrectionTests {
     state.didCorrect(pendingEdit)
     state.manualInsertion("a", in: context("nicht ", document: document))
     check("typing consumes undo", state.takeUndo(in: context("nicht a", document: document)) == nil)
+
+    // The provider's letters (its selected languages) bound what the state machine corrects.
+    var englishOnly = typed("Mädcehn", document: document)
+    check("english-only selection leaves umlaut word", englishOnly.0.correction(
+      in: englishOnly.1, provider: SelectionProvider(
+        words: ["Mädchen"], letters: KeyboardCorrectionLanguage.letters(of: [english]))) == nil)
+    var germanOnly = typed("Mädcehn", document: document)
+    let germanEdit = germanOnly.0.correction(
+      in: germanOnly.1, provider: SelectionProvider(
+        words: ["Mädchen"], letters: KeyboardCorrectionLanguage.letters(of: [german])))
+    check("german selection corrects umlaut word", germanEdit?.replacement == "Mädchen")
     print("Keyboard autocorrection: \(count) checks passed")
   }
 }

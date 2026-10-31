@@ -19,7 +19,7 @@ const EXTENSION_FILES = [
   { name: 'KeyboardViewController.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
   { name: 'KeyboardCapitalization.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
   { name: 'KeyboardAutocorrection.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
-  { name: 'GermanTextCheckerProvider.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
+  { name: 'TextCheckerCorrectionProvider.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
 ];
 const BUILD_PHASE_ISA = {
   Sources: 'PBXSourcesBuildPhase',

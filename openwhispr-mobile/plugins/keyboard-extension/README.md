@@ -1,6 +1,6 @@
 # keyboard-extension (Expo config plugin + iOS extension target)
 
-A custom iOS keyboard extension that lets the user dictate from any text field system-wide. Its keys look and type like Apple's keyboard; the toolbar above them holds the tone menu, the dictation pill and the agent button, with no suggestion bar and a default-on [German autocorrection prototype](AUTOCORRECTION.md) for eligible manually typed words. Tapping **Tap to speak** records in place through the OpenWhispr app's background session; only when that session has gone stale does the pill read **Activate** and hand off to the app.
+A custom iOS keyboard extension that lets the user dictate from any text field system-wide. Its keys look and type like Apple's keyboard; the toolbar above them holds the tone menu, the dictation pill and the agent button, with no suggestion bar and a default-on [autocorrection prototype](AUTOCORRECTION.md) for eligible manually typed words (German and English by default; Settings → Preferences → Keyboard → Autocorrection switches it off and picks the languages). Tapping **Tap to speak** records in place through the OpenWhispr app's background session; only when that session has gone stale does the pill read **Activate** and hand off to the app.
 
 ## What's here
 

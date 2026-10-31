@@ -336,10 +336,10 @@ function phaseCount(project: Project, targetUuid: string, isa: string) {
 
 function expectKeyboardWiring(project: Project, keyboardTarget = KEYBOARD_TARGET) {
   expect(phaseFiles(project, keyboardTarget, 'PBXSourcesBuildPhase')).toEqual([
-    'GermanTextCheckerProvider.swift',
     'KeyboardAutocorrection.swift',
     'KeyboardCapitalization.swift',
     'KeyboardViewController.swift',
+    'TextCheckerCorrectionProvider.swift',
   ]);
   expect(phaseFiles(project, keyboardTarget, 'PBXResourcesBuildPhase')).toEqual([]);
   expect(phaseFiles(project, APP_TARGET, 'PBXSourcesBuildPhase')).toEqual([]);
@@ -530,10 +530,10 @@ describe('withKeyboardExtension mods', () => {
       'B30000000000000000000002',
     ]);
     expect(groupChildNames(project, 'B30000000000000000000002')).toEqual([
-      'GermanTextCheckerProvider.swift',
       'KeyboardAutocorrection.swift',
       'KeyboardCapitalization.swift',
       'KeyboardViewController.swift',
+      'TextCheckerCorrectionProvider.swift',
     ]);
     expect(groupChildNames(project, 'B30000000000000000000004')).toEqual([]);
   });

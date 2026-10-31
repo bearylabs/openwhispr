@@ -144,6 +144,7 @@ private extension KeyboardViewController {
   func touchTestInsertTranscript(_ text: String) { insertSmartText(text) }
   func touchTestTapLetter(_ index: Int) { handleCharacterKeyTapped(characterButtons[index]) }
   func touchTestSetProvider(_ provider: KeyboardCorrectionProvider) { correctionProvider = provider }
+  func touchTestSetAutocorrectionSwitch(_ on: @escaping () -> Bool) { autocorrectionSwitchedOn = on }
   func touchTestTypeWord(_ word: String, hostCallbacks: Bool = false) {
     isShiftEnabled = false
     for character in word {
@@ -507,6 +508,8 @@ private enum KeyboardTouchTests {
       proxy.reportsOwnEdits = reports
       let controller = KeyboardViewController.makeLaidOutKeyboard(width: 402)
       controller.touchTestSetProvider(CorrectionStub())
+      // Never the developer machine's App Group value.
+      controller.touchTestSetAutocorrectionSwitch { true }
       return controller
     }
     UserDefaults.standard.removeObject(forKey: key)
@@ -602,6 +605,26 @@ private enum KeyboardTouchTests {
     controller.touchTestTapSpace()
     controller.touchTestBeginRepeatedDelete()
     checks.check("long-press delete does not undo", TestEnvironment.proxy.documentContextBeforeInput == "nicht")
+    // The app's Settings switch, read at each space so a change applies at once.
+    var switchedOn = false
+    controller = keyboard()
+    controller.touchTestSetAutocorrectionSwitch { switchedOn }
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    checks.check("settings switch off leaves the word", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+    switchedOn = true
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    checks.check("settings switch on again corrects", TestEnvironment.proxy.documentContextBeforeInput == "nciht nicht ")
+
+    controller = keyboard()
+    controller.touchTestSetProvider(CorrectionStub(words: ["the"]))
+    controller.touchTestTypeWord("teh")
+    controller.touchTestTapSpace()
+    checks.check("english correction", TestEnvironment.proxy.documentContextBeforeInput == "the ")
+    controller.touchTestTapDelete()
+    checks.check("english undo", TestEnvironment.proxy.documentContextBeforeInput == "teh")
+
     controller = keyboard()
     TestEnvironment.proxy.autocorrectionType = .no
     controller.touchTestTypeWord("nciht")

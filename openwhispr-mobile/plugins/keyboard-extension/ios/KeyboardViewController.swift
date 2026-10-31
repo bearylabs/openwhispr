@@ -1128,9 +1128,16 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var appliedBottomRowLayout: BottomRowLayout?
   /// What the return key last drew, so a keystroke that doesn't change it skips the redraw.
   private var appliedReturnKeyState: ReturnKeyState?
-  // Manual typing only; enabled by default, subject to the host field’s safety gates.
+  // Manual typing only; on unless switched off in the app's Settings, and always subject
+  // to the host field’s safety gates. The languages picked there are checked together.
   private var autocorrection = KeyboardAutocorrection()
-  private lazy var correctionProvider: KeyboardCorrectionProvider = GermanTextCheckerProvider()
+  /// Set only by tests; otherwise the dictionaries follow the app's language selection.
+  private var correctionProvider: KeyboardCorrectionProvider?
+  private var textCheckerProvider: TextCheckerCorrectionProvider?
+  /// Read at each manual space, so the Settings switch applies without reopening the keyboard.
+  private var autocorrectionSwitchedOn: () -> Bool = {
+    KeyboardHandoffProvider.shared.isAutocorrectionSwitchedOn()
+  }
   /// The field the keyboard last typed into, and the last one seen reporting text.
   private var typedDocument: UUID?
   private var reportingDocument: UUID?
@@ -1582,15 +1589,28 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       after: edit.context.after, selection: edit.context.selection, allowed: edit.context.allowed)
   }
 
+  /// Rebuilt only when the app's language selection changes, read like the switch at each space.
+  private func currentCorrectionProvider() -> KeyboardCorrectionProvider {
+    if let correctionProvider { return correctionProvider }
+    let languages = KeyboardCorrectionLanguage.selection(
+      from: KeyboardHandoffProvider.shared.autocorrectionLanguageSetting())
+    if let textCheckerProvider, textCheckerProvider.languages == languages {
+      return textCheckerProvider
+    }
+    let provider = TextCheckerCorrectionProvider(languages: languages)
+    textCheckerProvider = provider
+    return provider
+  }
+
   private func applyManualSpaceCorrection() -> Bool {
     let context = correctionContext()
     // Flags only: never emit the word, surrounding text, document UUID or proposals.
     KeyboardLog.ui.info("Autocorrection space: allowed=\(context.allowed, privacy: .public) leftKnown=\(context.before != nil, privacy: .public) rightKnown=\(context.after != nil, privacy: .public) selected=\(!(context.selection ?? "").isEmpty, privacy: .public) tracked=\(self.autocorrection.hasTrackedWord, privacy: .public) awaitingReport=\(self.autocorrection.awaitingHostReport, privacy: .public)")
-    guard context.isSafe else {
+    guard context.isSafe, autocorrectionSwitchedOn() else {
       autocorrection.invalidate()
       return false
     }
-    guard let edit = autocorrection.correction(in: context, provider: correctionProvider),
+    guard let edit = autocorrection.correction(in: context, provider: currentCorrectionProvider()),
           // UITextChecker may take time. Re-read the proxy immediately before any deletion.
           correctionContext() == edit.context else {
       autocorrection.invalidate()
@@ -4864,6 +4884,8 @@ private struct KeyboardHandoffProvider {
   private let transcriptionStatusUpdatedAtMsKey = "keyboard_transcription_status_updated_at_ms"
   private let dictationToneKey = "keyboard_dictation_tone"
   private let toneApplicableKey = "keyboard_tone_applicable"
+  private let autocorrectionSwitchKey = "keyboard_autocorrection_enabled"
+  private let autocorrectionLanguagesKey = "keyboard_autocorrection_languages"
   // Dictation-agent mirror keys (app-written, persist across launches) and the
   // one-shot request / result channels shared with the main app.
   private let agentEnabledKey = "keyboard_agent_enabled"
@@ -4984,6 +5006,17 @@ private struct KeyboardHandoffProvider {
   func isToneApplicable() -> Bool {
     guard let defaults = UserDefaults(suiteName: appGroupId) else { return false }
     return defaults.string(forKey: toneApplicableKey) != "0"
+  }
+
+  /// Only an explicit "0" from the app's Settings switches correction off. Without Full
+  /// Access the App Group can't be read, so correction stays on as it needs no Full Access.
+  func isAutocorrectionSwitchedOn() -> Bool {
+    UserDefaults(suiteName: appGroupId)?.string(forKey: autocorrectionSwitchKey) != "0"
+  }
+
+  /// "de,en" as the app writes it; nil without Full Access, which selects the default.
+  func autocorrectionLanguageSetting() -> String? {
+    UserDefaults(suiteName: appGroupId)?.string(forKey: autocorrectionLanguagesKey)
   }
 
   // MARK: Dictation agent

@@ -33,27 +33,76 @@ struct KeyboardCorrectionContext: Equatable {
   }
 }
 
+/// A language the keyboard can correct. `code` is what the app's Settings write to the App
+/// Group (`src/lib/keyboardAutocorrection.ts` lists the same codes); `dictionaries` are
+/// UITextChecker identifiers in order of preference, then any `<code>_`/`<code>-` variant;
+/// `letters` are the lowercase letters a correctable word of this language may use.
+struct KeyboardCorrectionLanguage: Equatable {
+  let code: String
+  let dictionaries: [String]
+  let letters: Set<Character>
+
+  private static let latin = Set("abcdefghijklmnopqrstuvwxyz")
+  static let german = Self(code: "de", dictionaries: ["de_DE", "de-DE", "de"],
+                           letters: latin.union("äöüß"))
+  static let english = Self(code: "en", dictionaries: ["en_US", "en-US", "en_GB", "en-GB", "en"],
+                            letters: latin)
+  /// Adding a language: an entry here, its code in the app's list, and tests.
+  static let all = [german, english]
+  static let defaultSelection = [german, english]
+  /// Each language is another lookup at every space; matches the app's cap.
+  static let maxSelected = 3
+
+  /// Parses the App Group value ("de,en"). Unknown codes are ignored, duplicates dropped and
+  /// the list capped; nothing usable (missing key, no Full Access) means the default.
+  static func selection(from raw: String?) -> [KeyboardCorrectionLanguage] {
+    var picked: [KeyboardCorrectionLanguage] = []
+    for part in (raw ?? "").split(separator: ",") {
+      let code = part.trimmingCharacters(in: .whitespaces).lowercased()
+      if let language = all.first(where: { $0.code == code }), !picked.contains(language),
+         picked.count < maxSelected {
+        picked.append(language)
+      }
+    }
+    return picked.isEmpty ? defaultSelection : picked
+  }
+
+  static func letters(of languages: [KeyboardCorrectionLanguage]) -> Set<Character> {
+    languages.reduce(into: Set<Character>()) { $0.formUnion($1.letters) }
+  }
+}
+
 protocol KeyboardCorrectionProvider {
   func suggestions(for word: String) -> [String]
+  /// The letters of the languages it corrects; words with any other letter are left alone.
+  var letters: Set<Character> { get }
+}
+
+extension KeyboardCorrectionProvider {
+  var letters: Set<Character> { KeyboardCorrectionRules.defaultLetters }
 }
 
 enum KeyboardCorrectionRules {
-  // Deliberately narrow: German letters, no identifiers, mixed case, combining marks,
-  // punctuation, emoji, digits, or capitalization changes. Character indexing, not UTF-16.
-  static func isWord(_ word: String) -> Bool {
+  static let defaultLetters = KeyboardCorrectionLanguage.letters(
+    of: KeyboardCorrectionLanguage.defaultSelection)
+
+  // Deliberately narrow: the selected languages' letters, no identifiers, mixed case, combining
+  // marks, punctuation, emoji, digits, or capitalization changes. Character indexing, not UTF-16.
+  static func isWord(_ word: String,
+                     letters: Set<Character> = KeyboardCorrectionRules.defaultLetters) -> Bool {
     let lower = word.lowercased()
-    let alphabet = Set("abcdefghijklmnopqrstuvwxyzäöüß")
     return (3...20).contains(word.count)
-      && lower.allSatisfy { alphabet.contains($0) }
+      && lower.allSatisfy { letters.contains($0) }
       && word.unicodeScalars.count == word.count
       && (word == lower || word == String(lower.prefix(1)).uppercased() + lower.dropFirst())
   }
 
-  static func replacement(for word: String, suggestions: [String]) -> String? {
-    guard isWord(word) else { return nil }
+  static func replacement(for word: String, suggestions: [String],
+                          letters: Set<Character> = KeyboardCorrectionRules.defaultLetters) -> String? {
+    guard isWord(word, letters: letters) else { return nil }
     let source = Array(word)
     let candidates = Set(suggestions).filter { candidate in
-      guard isWord(candidate),
+      guard isWord(candidate, letters: letters),
             (word == word.lowercased()) == (candidate == candidate.lowercased()) else { return false }
       let target = Array(candidate)
       if source.count == target.count {
@@ -139,10 +188,11 @@ struct KeyboardAutocorrection {
   mutating func correction(in context: KeyboardCorrectionContext,
                            provider: KeyboardCorrectionProvider) -> Edit? {
     reconcile(context)
-    guard expected != nil, KeyboardCorrectionRules.isWord(word),
+    let letters = provider.letters
+    guard expected != nil, KeyboardCorrectionRules.isWord(word, letters: letters),
           (context.after ?? "").isEmpty || context.after?.first?.isWhitespace == true,
           let replacement = KeyboardCorrectionRules.replacement(
-            for: word, suggestions: provider.suggestions(for: word)) else { return nil }
+            for: word, suggestions: provider.suggestions(for: word), letters: letters) else { return nil }
     return Edit(original: word, replacement: replacement, context: context)
   }
 
