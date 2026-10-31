@@ -66,14 +66,6 @@ python3 openwhispr-mobile/plugins/keyboard-extension/tests/run-keyboard-touch-te
 
 Run it from the repository root after changing the keyboard layout, its padding or key targets; mobile CI runs it too. The runner compiles the production keyboard Swift sources for Mac Catalyst, so it needs no simulator, signing credentials or Expo build; it stubs what iOS would tell the keyboard (the field behind it, the globe key, a phone or an iPad, landscape). It tests UIKit hit routing across row gaps, overlapping key targets, unequal key widths, nested stacks, hidden layouts, disabled keys and keyboard boundaries, then lays out the real keyboard at every iPhone width in portrait and landscape, on all three pages, with and without the globe key, on iPad, and with the URL, email, web search and Twitter bottom rows and a greyed return key, and checks that no tap below the dictation strip is dropped, the keyboard's padding included. It also checks shift after letters and deletes, smart quotes per field, the return key and Twitter rows per page, rotation, the globe key settling late, a view shorter than the keyboard, and the review card's extra height.
 
-The height regressions also exercise the intrinsic self-sizing contract at cold
-start with provisional host frames, compact/full transitions and review expansion.
-They cannot validate iOS's system-owned glass backdrop. Before releasing a sizing
-change, cold-launch several host apps (including a search field), open the keyboard
-for the first time, and compare the toolbar/backdrop before and after switching to
-another keyboard and back. Repeat with full and minimal keyboards, in portrait and
-landscape. Debug builds log requested and actual sizes when the sizing request changes.
-
 These touch tests do not measure typing latency. Before releasing,
 check fast two-thumb typing and repeated letters on an iPhone, near-edge taps,
 Shift, 123/ABC, space/return, held delete, keyboard switching, and dictation in

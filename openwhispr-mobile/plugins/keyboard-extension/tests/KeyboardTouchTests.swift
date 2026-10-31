@@ -105,61 +105,6 @@ private extension KeyboardViewController {
   }
 
   @MainActor
-  static func checkInitialSelfSizing(_ checks: inout TouchChecks) {
-    TestEnvironment.reset()
-    defer { TestEnvironment.reset() }
-    let controller = KeyboardViewController()
-    controller.loadViewIfNeeded()
-    let input = controller.keyboardInputView
-    checks.check("cold start: self sizing is enabled", input.allowsSelfSizing)
-    checks.check("cold start: intrinsic and preferred heights agree",
-      input.intrinsicContentSize.height == controller.preferredContentSize.height
-        && input.contentHeight > 0)
-    checks.check("cold start: no required root height constraint fights the host",
-      !input.constraints.contains {
-        $0.firstAttribute == .height && $0.secondItem == nil && $0.priority == .required
-      })
-
-    // Simulate iOS presenting its provisional frame. The requested height must
-    // remain independent of that frame, including on a repeated layout pass.
-    for provisionalHeight in [CGFloat(444), 200, 444] {
-      input.frame = CGRect(x: 0, y: 0, width: 402, height: provisionalHeight)
-      controller.viewWillAppear(false)
-      input.setNeedsLayout()
-      input.layoutIfNeeded()
-      checks.check("provisional frame: requested height still follows content",
-        input.intrinsicContentSize.height == controller.preferredContentSize.height
-          && input.contentHeight == controller.typingLayoutHeight)
-      let requested = controller.preferredContentSize
-      controller.viewDidLayoutSubviews()
-      checks.check("unchanged layout: sizing stays stable", controller.preferredContentSize == requested)
-      let target = CGSize(width: 402, height: provisionalHeight)
-      checks.check("provisional frame: simple fitting uses the content height",
-        input.systemLayoutSizeFitting(target) == CGSize(width: 402, height: input.contentHeight))
-      checks.check("provisional frame: sizeThatFits uses the content height",
-        input.sizeThatFits(target) == CGSize(width: 402, height: input.contentHeight))
-    }
-
-    // Ask Auto Layout for the size; do not assign preferredContentSize to the frame.
-    func fittedHeight() -> CGFloat {
-      input.systemLayoutSizeFitting(
-        CGSize(width: 402, height: 0),
-        withHorizontalFittingPriority: .required,
-        verticalFittingPriority: .fittingSizeLevel
-      ).height
-    }
-    checks.check("host fitting: typing height follows intrinsic height",
-      abs(fittedHeight() - input.contentHeight) < 0.5)
-    controller.touchTestShowAgentResult()
-    checks.check("host fitting: review reserves its extra height",
-      abs(fittedHeight() - input.contentHeight) < 0.5
-        && input.contentHeight == controller.metrics.keyboardHeight + Metrics.agentReviewExtraHeight)
-    controller.hideAgentReviewCard()
-    checks.check("host fitting: dismissing review restores typing height",
-      abs(fittedHeight() - controller.typingLayoutHeight) < 0.5)
-  }
-
-  @MainActor
   static func checkMinimalKeyboardHeight(
     _ checks: inout TouchChecks, width: CGFloat, globe: Bool = false, landscape: Bool = false
   ) {
@@ -189,17 +134,9 @@ private extension KeyboardViewController {
     defaults.set("1", forKey: "keyboard_minimal_enabled")
     defaults.synchronize()
     let controller = makeLaidOutKeyboard(width: width)
-    // Fit through the self-sizing contract instead of assuming the host adopts
-    // preferredContentSize. This also covers compact menus and review transitions.
+    // Mirror the host adopting preferredContentSize after each layout transition.
     func layout() {
-      let fitted = controller.view.systemLayoutSizeFitting(
-        CGSize(width: width, height: 0),
-        withHorizontalFittingPriority: .required,
-        verticalFittingPriority: .fittingSizeLevel
-      )
-      checks.check("self sizing matches preferred height",
-        abs(fitted.height - controller.preferredContentSize.height) < 0.5)
-      controller.view.frame.size.height = fitted.height
+      controller.view.frame.size.height = controller.preferredContentSize.height
       controller.view.setNeedsLayout()
       controller.view.layoutIfNeeded()
     }
@@ -219,7 +156,7 @@ private extension KeyboardViewController {
     let compactHeight = controller.typingLayoutHeight
     checks.check("minimal toolbar is shorter than typing layout", compactHeight < controller.metrics.keyboardHeight)
     checks.check("uncreated permissions panel does not reserve height",
-      !controller.didSetupFullAccessPanel && controller.keyboardInputView.contentHeight == compactHeight)
+      !controller.didSetupFullAccessPanel && controller.keyboardHeightConstraint?.constant == compactHeight)
     checks.check("host receives compact preferred height", controller.preferredContentSize.height == compactHeight)
 
     controller.showFullAccessPanel(animated: false)
@@ -242,7 +179,7 @@ private extension KeyboardViewController {
     checks.check("compact waveform stays inside its pill",
       frameInKeyboard(controller.recordingPill).contains(frameInKeyboard(controller.recordingWaveformStack)))
     checks.check("minimal recording keeps compact height",
-      controller.keyboardInputView.contentHeight == compactHeight)
+      controller.keyboardHeightConstraint?.constant == compactHeight)
     checks.check("minimal recording shows waveform pill without caption",
       !controller.recordingPill.isHidden && controller.recordingCaptionLabel.isHidden)
     checks.check("minimal recording uses toolbar-aligned controls",
@@ -257,7 +194,7 @@ private extension KeyboardViewController {
     controller.hideRecordingCanvas()
     layout()
     checks.check("ending recording restores compact height",
-      controller.keyboardInputView.contentHeight == compactHeight)
+      controller.keyboardHeightConstraint?.constant == compactHeight)
 
     controller.toneButton.sendActions(for: .touchUpInside)
     layout()
@@ -274,6 +211,10 @@ private extension KeyboardViewController {
     layout()
     checks.check("tone selection persists to App Group",
       KeyboardHandoffProvider.shared.currentTone() == "formal")
+    checks.check("compact menu marks only the selected tone",
+      controller.compactToneButtons.allSatisfy {
+        $0.button.accessibilityTraits.contains(.selected) == ($0.value == "formal")
+      })
     checks.check("tone selection collapses keyboard",
       controller.view.bounds.height == compactHeight && controller.compactToneMenu.isHidden)
 
@@ -316,7 +257,7 @@ private extension KeyboardViewController {
       controller.recordingPill.isHidden && !controller.recordingCaptionLabel.isHidden
         && controller.regularRecordingConstraints.allSatisfy { $0.isActive })
     checks.check("disabling minimal layout restores full height",
-      controller.keyboardInputView.contentHeight == controller.metrics.keyboardHeight)
+      controller.keyboardHeightConstraint?.constant == controller.metrics.keyboardHeight)
   }
 
   var touchTestRows: KeyboardRowsStack { keyboardRowsStack }
@@ -330,7 +271,7 @@ private extension KeyboardViewController {
   var touchTestKeyboardHeight: CGFloat { metrics.keyboardHeight }
   var touchTestStripTop: CGFloat { metrics.stripTop }
   var touchTestReviewExtraHeight: CGFloat { Metrics.agentReviewExtraHeight }
-  var touchTestHeightConstant: CGFloat? { keyboardInputView.contentHeight }
+  var touchTestHeightConstant: CGFloat? { keyboardHeightConstraint?.constant }
   var touchTestLetters: [KeyButton] { characterButtons }
   var touchTestReturn: KeyButton { returnButton! }
   var touchTestShortcuts: [String] { shortcutButtons.filter { !$0.isHidden }.compactMap(\.output) }
@@ -414,7 +355,6 @@ private enum KeyboardTouchTests {
     }
     checkFieldAwareKeys(&checks)
     checkLayoutChanges(&checks)
-    KeyboardViewController.checkInitialSelfSizing(&checks)
     KeyboardViewController.checkMinimalKeyboardHeight(&checks, width: 402)
     KeyboardViewController.checkMinimalKeyboardHeight(&checks, width: 375, globe: true)
     KeyboardViewController.checkMinimalKeyboardHeight(&checks, width: 852, landscape: true)

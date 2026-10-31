@@ -17,43 +17,6 @@ private enum KeyboardLog {
   }
 }
 
-/// One sizing contract for both the extension content and iOS's keyboard backdrop.
-/// Do not pin this view's height with a required constraint: the host supplies its
-/// own frame during presentation and must be able to negotiate the initial size.
-private final class KeyboardInputView: UIInputView {
-  private(set) var contentHeight: CGFloat = 0
-
-  override var intrinsicContentSize: CGSize {
-    CGSize(width: UIView.noIntrinsicMetric, height: contentHeight)
-  }
-
-  // UIInputView's default fitting also measures its arranged content. That can
-  // outweigh the intrinsic height (or retain an old expanded size) even though
-  // our toolbar/rows already contributed to contentHeight. The self-sizing host
-  // must receive exactly that height, independently of the provisional frame.
-  override func systemLayoutSizeFitting(_ targetSize: CGSize) -> CGSize {
-    CGSize(width: targetSize.width, height: contentHeight)
-  }
-
-  override func systemLayoutSizeFitting(
-    _ targetSize: CGSize,
-    withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
-    verticalFittingPriority: UILayoutPriority
-  ) -> CGSize {
-    CGSize(width: targetSize.width, height: contentHeight)
-  }
-
-  override func sizeThatFits(_ size: CGSize) -> CGSize {
-    CGSize(width: size.width, height: contentHeight)
-  }
-
-  func updateContentHeight(_ height: CGFloat) {
-    guard contentHeight != height else { return }
-    contentHeight = height
-    invalidateIntrinsicContentSize()
-  }
-}
-
 /// Every colour the keyboard draws. Theme-dependent ones are dynamic: iOS applies both a
 /// light/dark switch and the host field's keyboardAppearance to the extension, so views
 /// restyle with no code. (Overriding the style from textDocumentProxy.keyboardAppearance
@@ -873,6 +836,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     /// text gets about three lines in landscape. Back to 299pt on a 17 Pro, as before the
     /// keys were rebuilt to Apple's.
     static let agentReviewExtraHeight: CGFloat = 40
+    /// The minimal keyboard's own globe row on devices without a system globe key.
+    static let minimalGlobeRowHeight: CGFloat = 36
   }
 
   private enum KeyboardSize {
@@ -1100,7 +1065,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var typingLayoutHeight: CGFloat {
     guard minimalKeyboardEnabled else { return metrics.keyboardHeight }
     return metrics.stripTop + metrics.stripHeight + metrics.bottomPadding
-      + (minimalGlobeVisible ? 36 : 0)
+      + (minimalGlobeVisible ? Metrics.minimalGlobeRowHeight : 0)
       + (isCompactToneMenuShown ? Self.compactToneMenuHeight : 0)
   }
 
@@ -1137,6 +1102,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var keyWidthGuideConstraint: NSLayoutConstraint?
 
   private let compactToneMenu = UIStackView()
+  private let compactToneMenuTitle = UILabel()
+  private var compactToneButtons: [(value: String, button: UIButton)] = []
   private var isCompactToneMenuShown = false
   private let recordingPill = PillBackgroundView()
   private var regularRecordingConstraints: [NSLayoutConstraint] = []
@@ -1223,7 +1190,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var keysBuiltWithGlobe = false
   private var rootHeightConstraint: NSLayoutConstraint?
   private var topBarHeightConstraint: NSLayoutConstraint?
-  private var keyboardInputView: KeyboardInputView { view as! KeyboardInputView }
+  private var keyboardHeightConstraint: NSLayoutConstraint?
   private var rowHeightConstraints: [NSLayoutConstraint] = []
   private var isRemoteRecordingActive = false
   private var isDarwinStartPending = false
@@ -1331,14 +1298,6 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     )
   }
 
-  override func loadView() {
-    // Let the host size the entire keyboard from its intrinsic content height,
-    // rather than retaining a default typing-keyboard frame around the compact bar.
-    let inputView = KeyboardInputView(frame: .zero, inputViewStyle: .keyboard)
-    inputView.allowsSelfSizing = true
-    view = inputView
-  }
-
   override func viewDidLoad() {
     super.viewDidLoad()
     KeyboardLog.ui.info("Keyboard loaded. hasFullAccess=\(self.hasFullAccess, privacy: .public)")
@@ -1359,25 +1318,24 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func applyKeyboardHeight() {
     // The keys keep their height at the bottom; the card above them takes the extra.
     let showsCardHeight = isAgentReviewShown || isAgentActionInFlight
-    // Minimal recordings keep the toolbar height; permissions and generated-text
-    // review still need their original canvas to remain readable and tappable.
-    // The permissions panel is created lazily. Before setup its UIView has
-    // interaction enabled by default, but it is not on screen and needs no space.
+    // The minimal keyboard shrinks to its toolbar, except while the permissions
+    // panel or the agent review needs the full canvas. Its recordings stay compact.
+    // The permissions panel is created lazily and needs no space until it is set up.
     let showsFullAccessPanel = didSetupFullAccessPanel && fullAccessPanel.isUserInteractionEnabled
-    let needsCanvas = showsCardHeight
-      || (recordingCanvas.isUserInteractionEnabled && !minimalKeyboardEnabled)
-      || showsFullAccessPanel
-    let baseHeight = needsCanvas ? metrics.keyboardHeight : typingLayoutHeight
+    let usesCompactHeight = minimalKeyboardEnabled && !showsCardHeight && !showsFullAccessPanel
+    let baseHeight = usesCompactHeight ? typingLayoutHeight : metrics.keyboardHeight
     let keyboardHeight = baseHeight + (showsCardHeight ? Metrics.agentReviewExtraHeight : 0)
-    if rootHeightConstraint?.constant != typingLayoutHeight {
-      rootHeightConstraint?.constant = typingLayoutHeight
-    }
+    rootHeightConstraint?.constant = typingLayoutHeight
 
-    keyboardInputView.updateContentHeight(keyboardHeight)
-    let requestedSize = CGSize(width: layoutWidth, height: keyboardHeight)
-    guard preferredContentSize != requestedSize else { return }
-    preferredContentSize = requestedSize
-    KeyboardLog.echo("Keyboard size requested=\(requestedSize) actual=\(view.bounds.size)")
+    if let keyboardHeightConstraint {
+      keyboardHeightConstraint.constant = keyboardHeight
+    } else {
+      let constraint = view.heightAnchor.constraint(equalToConstant: keyboardHeight)
+      constraint.priority = UILayoutPriority(999)
+      constraint.isActive = true
+      keyboardHeightConstraint = constraint
+    }
+    preferredContentSize = CGSize(width: view.bounds.width, height: keyboardHeight)
   }
 
   override func textDidChange(_ textInput: UITextInput?) {
@@ -1392,7 +1350,6 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   // textDidChange when the keyboard opens: shift and the return key follow the field here.
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
-    refreshMetricsIfNeeded()
     refreshMinimalKeyboardPreference()
     noteFieldReport()
     syncShiftWithContextIfNeeded()
@@ -1690,9 +1647,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     rootHeightConstraint = rootStack.heightAnchor.constraint(equalToConstant: metrics.keyboardHeight)
     rootHeightConstraint?.priority = UILayoutPriority(999)
     let rootTopConstraint = rootStack.topAnchor.constraint(equalTo: view.topAnchor)
-    // The input view's intrinsic height wins over this cosmetic top alignment,
-    // including when a review card reserves extra space above the typing rows.
-    rootTopConstraint.priority = UILayoutPriority(249)
+    rootTopConstraint.priority = .defaultHigh
 
     NSLayoutConstraint.activate([
       rootStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -1720,7 +1675,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     minimalGlobeButton.addTarget(
       self, action: #selector(handleInputModeListButton(_:forEvent:)), for: .allTouchEvents
     )
-    let minimalGlobeHeight = minimalGlobeButton.heightAnchor.constraint(equalToConstant: 36)
+    let minimalGlobeHeight = minimalGlobeButton.heightAnchor.constraint(
+      equalToConstant: Metrics.minimalGlobeRowHeight
+    )
     minimalGlobeHeight.priority = UILayoutPriority(999)
     minimalGlobeHeight.isActive = true
     minimalGlobeButton.isHidden = true
@@ -2577,11 +2534,44 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     CGFloat(toneMenuItems.count + 1) * compactToneMenuRowHeight
   }
 
+  /// The minimal keyboard's inline tone list. A UIMenu is clipped to the
+  /// keyboard's height, so the rows grow the compact keyboard instead.
   private func setupCompactToneMenu() {
     compactToneMenu.axis = .vertical
     compactToneMenu.distribution = .fillEqually
     compactToneMenu.isHidden = true
+    compactToneMenuTitle.font = .systemFont(ofSize: 12, weight: .medium)
+    compactToneMenuTitle.textColor = .secondaryLabel
+    compactToneMenuTitle.textAlignment = .center
+    compactToneMenu.addArrangedSubview(compactToneMenuTitle)
+    compactToneButtons = Self.toneMenuItems.map { item in
+      let button = UIButton(type: .system)
+      button.setTitle(item.title, for: .normal)
+      button.addAction(
+        UIAction { [weak self] _ in self?.selectCompactTone(item.value) }, for: .touchUpInside
+      )
+      compactToneMenu.addArrangedSubview(button)
+      return (item.value, button)
+    }
     rootStack.addArrangedSubview(compactToneMenu)
+  }
+
+  private func refreshCompactToneMenu(title: String, current: String, applicable: Bool) {
+    compactToneMenuTitle.text = title
+    for (value, button) in compactToneButtons {
+      let selected = value == current
+      let locked = !applicable && value != "default"
+      let symbol = selected ? "checkmark" : locked ? "lock.fill" : nil
+      button.setImage(symbol.flatMap { UIImage(systemName: $0) }, for: .normal)
+      button.isEnabled = !locked
+      button.accessibilityTraits = selected ? [.button, .selected] : .button
+    }
+  }
+
+  private func selectCompactTone(_ tone: String) {
+    KeyboardHandoffProvider.shared.setTone(tone)
+    closeCompactToneMenu()
+    refreshToneButton()
   }
 
   private func closeCompactToneMenu() {
@@ -2639,29 +2629,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     let menuTitle = applicable ? "Dictation Tone" : "Tones are off in Local Mode"
     toneButton.showsMenuAsPrimaryAction = !minimalKeyboardEnabled
     toneButton.menu = minimalKeyboardEnabled ? nil : UIMenu(title: menuTitle, children: actions)
-    for child in compactToneMenu.arrangedSubviews {
-      compactToneMenu.removeArrangedSubview(child)
-      child.removeFromSuperview()
-    }
-    if minimalKeyboardEnabled {
-      let title = UILabel()
-      title.text = menuTitle
-      title.font = .systemFont(ofSize: 12, weight: .medium)
-      title.textColor = .secondaryLabel
-      title.textAlignment = .center
-      compactToneMenu.addArrangedSubview(title)
-      for item in Self.toneMenuItems {
-        let button = UIButton(type: .system)
-        button.setTitle((item.value == current ? "✓ " : "") + item.title, for: .normal)
-        button.isEnabled = applicable || item.value == "default"
-        button.addAction(UIAction { [weak self] _ in
-          KeyboardHandoffProvider.shared.setTone(item.value)
-          self?.closeCompactToneMenu()
-          self?.refreshToneButton()
-        }, for: .touchUpInside)
-        compactToneMenu.addArrangedSubview(button)
-      }
-    }
+    refreshCompactToneMenu(title: menuTitle, current: current, applicable: applicable)
     toneButton.isUserInteractionEnabled = true
     toneButton.alpha = applicable ? 1.0 : 0.4
   }
