@@ -2547,9 +2547,11 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     compactToneButtons = Self.toneMenuItems.map { item in
       let button = UIButton(type: .system)
       button.setTitle(item.title, for: .normal)
-      button.addAction(
-        UIAction { [weak self] _ in self?.selectCompactTone(item.value) }, for: .touchUpInside
-      )
+      button.addAction(UIAction { [weak self] _ in
+        KeyboardHandoffProvider.shared.setTone(item.value)
+        self?.closeCompactToneMenu()
+        self?.refreshToneButton()
+      }, for: .touchUpInside)
       compactToneMenu.addArrangedSubview(button)
       return (item.value, button)
     }
@@ -2566,12 +2568,6 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       button.isEnabled = !locked
       button.accessibilityTraits = selected ? [.button, .selected] : .button
     }
-  }
-
-  private func selectCompactTone(_ tone: String) {
-    KeyboardHandoffProvider.shared.setTone(tone)
-    closeCompactToneMenu()
-    refreshToneButton()
   }
 
   private func closeCompactToneMenu() {
