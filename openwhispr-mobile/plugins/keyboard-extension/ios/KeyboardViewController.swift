@@ -1071,10 +1071,6 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   private func refreshMinimalKeyboardPreference() {
     minimalKeyboardEnabled = KeyboardHandoffProvider.shared.isMinimalKeyboardEnabled()
-    // Without self-sizing the host keeps a taller keyboard frame around the compact
-    // height constraint. Only the minimal keyboard opts in; the full keyboard keeps
-    // the system's default sizing.
-    inputView?.allowsSelfSizing = minimalKeyboardEnabled
     keyboardRowsStack.isHidden = minimalKeyboardEnabled
     minimalGlobeButton.isHidden = !minimalGlobeVisible
     if !minimalKeyboardEnabled { closeCompactToneMenu() }
@@ -1317,6 +1313,15 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     super.viewDidLayoutSubviews()
     refreshMetricsIfNeeded()
     applyKeyboardHeight()
+  }
+
+  /// The recording, review and permissions overlays fade over the keyboard and stay
+  /// in the layout while hidden. Their content must not hold the minimal keyboard
+  /// taller than its height constraint, so their top edge yields to it.
+  private func overlayTopConstraint(_ overlay: UIView) -> NSLayoutConstraint {
+    let constraint = overlay.topAnchor.constraint(equalTo: view.topAnchor)
+    constraint.priority = .defaultHigh
+    return constraint
   }
 
   private func applyKeyboardHeight() {
@@ -1758,7 +1763,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     NSLayoutConstraint.activate([
       recordingCanvas.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       recordingCanvas.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      recordingCanvas.topAnchor.constraint(equalTo: view.topAnchor),
+      overlayTopConstraint(recordingCanvas),
       recordingCanvas.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
       recordingCancelButton.widthAnchor.constraint(equalToConstant: Metrics.recordingActionButtonSize),
@@ -1916,7 +1921,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     NSLayoutConstraint.activate([
       agentReviewCanvas.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       agentReviewCanvas.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      agentReviewCanvas.topAnchor.constraint(equalTo: view.topAnchor),
+      overlayTopConstraint(agentReviewCanvas),
       agentReviewCanvas.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
       // Top row mirrors the recording canvas: ✕ leading / ✓ trailing at 16,12.
@@ -2184,7 +2189,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     NSLayoutConstraint.activate([
       fullAccessPanel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       fullAccessPanel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      fullAccessPanel.topAnchor.constraint(equalTo: view.topAnchor),
+      overlayTopConstraint(fullAccessPanel),
       fullAccessPanel.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
       fullAccessPanelCloseButton.leadingAnchor.constraint(

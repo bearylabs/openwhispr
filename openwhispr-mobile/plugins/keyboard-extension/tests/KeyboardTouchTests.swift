@@ -136,13 +136,14 @@ private extension KeyboardViewController {
     let controller = makeLaidOutKeyboard(width: width)
     // Mirror the host adopting preferredContentSize after each layout transition.
     func layout() {
-      // The self-sizing host measures the view; it must arrive at the requested height.
+      // The host sizes the keyboard through Auto Layout; hidden overlays must not
+      // hold it taller than the requested height.
       let fitted = controller.view.systemLayoutSizeFitting(
         CGSize(width: width, height: 0),
         withHorizontalFittingPriority: .required,
         verticalFittingPriority: .fittingSizeLevel
       )
-      checks.check("self sizing matches preferred height",
+      checks.check("auto layout fits the requested height",
         abs(fitted.height - controller.preferredContentSize.height) < 0.5)
       controller.view.frame.size.height = controller.preferredContentSize.height
       controller.view.setNeedsLayout()
@@ -158,7 +159,6 @@ private extension KeyboardViewController {
       checks.check("\(label) receives touches", target === button || target?.isDescendant(of: button) == true)
     }
     controller.refreshMinimalKeyboardPreference()
-    checks.check("minimal keyboard opts into self-sizing", controller.inputView?.allowsSelfSizing == true)
     let compactHeight = controller.typingLayoutHeight
     checks.check("minimal toolbar is shorter than typing layout", compactHeight < controller.metrics.keyboardHeight)
     checks.check("uncreated permissions panel does not reserve height",
@@ -264,11 +264,6 @@ private extension KeyboardViewController {
         && controller.regularRecordingConstraints.allSatisfy { $0.isActive })
     checks.check("disabling minimal layout restores full height",
       controller.keyboardHeightConstraint?.constant == controller.metrics.keyboardHeight)
-
-    defaults.set("0", forKey: "keyboard_minimal_enabled")
-    controller.refreshMinimalKeyboardPreference()
-    checks.check("full keyboard keeps the system's default sizing",
-      controller.inputView?.allowsSelfSizing == false)
   }
 
   var touchTestRows: KeyboardRowsStack { keyboardRowsStack }
