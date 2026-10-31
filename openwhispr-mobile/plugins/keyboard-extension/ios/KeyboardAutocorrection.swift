@@ -97,37 +97,156 @@ enum KeyboardCorrectionRules {
       && (word == lower || word == String(lower.prefix(1)).uppercased() + lower.dropFirst())
   }
 
+  // The keyboard's own letter rows (KeyboardViewController.letterRows), centred as drawn:
+  // the middle row half a key in, the bottom row a whole key in (shift sits beside it).
+  private static let keyRows: [(keys: String, offset: Double)] = [
+    ("qwertyuiop", 0), ("asdfghjkl", 0.5), ("zxcvbnm", 1.5),
+  ]
+
+  /// Keys that touch on the drawn layout: either side in a row, and the keys of the next row
+  /// that overlap it (two from the top rows, the one straight below/above for the bottom row).
+  static let keyNeighbors: [Character: Set<Character>] = {
+    var centres: [Character: (row: Int, x: Double)] = [:]
+    for (row, line) in keyRows.enumerated() {
+      for (index, key) in line.keys.enumerated() { centres[key] = (row, Double(index) + line.offset) }
+    }
+    var neighbors: [Character: Set<Character>] = [:]
+    for (key, a) in centres {
+      neighbors[key] = Set(centres.compactMap { other, b in
+        guard other != key else { return nil }
+        let dx = abs(a.x - b.x)
+        if a.row == b.row { return dx == 1 ? other : nil }
+        return abs(a.row - b.row) == 1 && dx < 1 ? other : nil
+      })
+    }
+    return neighbors
+  }()
+
+  static func areNeighborKeys(_ a: Character, _ b: Character) -> Bool {
+    let lowerA = Character(a.lowercased()), lowerB = Character(b.lowercased())
+    return keyNeighbors[lowerA]?.contains(lowerB) == true
+  }
+
+  /// How many letters may be neighbouring-key slips: none in three-letter words (`teh` stays
+  /// `the`, never `ten`), two in four-letter words, three from five letters on.
+  static func maxNeighborSlips(forLength length: Int) -> Int {
+    length >= 5 ? 3 : length == 4 ? 2 : 0
+  }
+
+  /// The edits from `word` to `candidate`, or nil when it is too far: 1 for a swap of two
+  /// adjacent letters, one wrong letter (four letters and up), or one missing or extra letter;
+  /// otherwise the number of wrong letters when every one is a neighbouring key.
+  static func editCost(from word: String, to candidate: String) -> Int? {
+    let source = Array(word), target = Array(candidate)
+    if source.count == target.count {
+      let changed = source.indices.filter { source[$0] != target[$0] }
+      guard !changed.isEmpty else { return nil }
+      // Adjacent swaps may include the first or last letter, even in short words.
+      if changed.count == 2, changed[1] == changed[0] + 1,
+         source[changed[0]] == target[changed[1]], source[changed[1]] == target[changed[0]] {
+        return 1
+      }
+      // Still avoid ordinary substitutions in very short words.
+      if source.count >= 4 && changed.count == 1 { return 1 }
+      guard changed.count <= maxNeighborSlips(forLength: source.count),
+            changed.allSatisfy({ areNeighborKeys(source[$0], target[$0]) }) else { return nil }
+      return changed.count
+    }
+    guard min(source.count, target.count) >= 4,
+          abs(source.count - target.count) == 1 else { return nil }
+    let longer = source.count > target.count ? source : target
+    let shorter = source.count > target.count ? target : source
+    // One extra/missing Character, not a UTF-16 code unit. Check only the first
+    // mismatch; skipping any other position cannot make the two sequences equal.
+    let mismatch = shorter.indices.first { longer[$0] != shorter[$0] } ?? shorter.count
+    var withoutExtra = longer
+    withoutExtra.remove(at: mismatch)
+    return withoutExtra == shorter ? 1 : nil
+  }
+
   static func replacement(for word: String, suggestions: [String],
                           letters: Set<Character> = KeyboardCorrectionRules.defaultLetters) -> String? {
     guard isWord(word, letters: letters) else { return nil }
-    let source = Array(word)
-    let candidates = Set(suggestions).filter { candidate in
+    var best: (cost: Int, words: Set<String>)?
+    for candidate in Set(suggestions) {
       guard isWord(candidate, letters: letters),
-            (word == word.lowercased()) == (candidate == candidate.lowercased()) else { return false }
-      let target = Array(candidate)
-      if source.count == target.count {
-        let changed = source.indices.filter { source[$0] != target[$0] }
-        // Adjacent swaps may now include the first or last letter, even in short words.
-        if changed.count == 2, changed[1] == changed[0] + 1,
-           source[changed[0]] == target[changed[1]], source[changed[1]] == target[changed[0]] {
-          return true
-        }
-        // Still avoid ordinary substitutions in very short words.
-        return source.count >= 4 && changed.count == 1
+            (word == word.lowercased()) == (candidate == candidate.lowercased()),
+            let cost = editCost(from: word, to: candidate) else { continue }
+      if best == nil || cost < best!.cost {
+        best = (cost, [candidate])
+      } else if cost == best!.cost {
+        best!.words.insert(candidate)
       }
-      guard min(source.count, target.count) >= 4,
-            abs(source.count - target.count) == 1 else { return false }
-      let longer = source.count > target.count ? source : target
-      let shorter = source.count > target.count ? target : source
-      // One extra/missing Character, not a UTF-16 code unit. Check only the first
-      // mismatch; skipping any other position cannot make the two sequences equal.
-      let mismatch = shorter.indices.first { longer[$0] != shorter[$0] } ?? shorter.count
-      var withoutExtra = longer
-      withoutExtra.remove(at: mismatch)
-      return withoutExtra == shorter
     }
-    // Ambiguous nearby words remain untouched, irrespective of provider ranking.
-    return candidates.count == 1 ? candidates.first : nil
+    // The fewest edits win; a tie stays untouched, irrespective of provider ranking.
+    guard let best, best.words.count == 1 else { return nil }
+    return best.words.first
+  }
+
+  /// Words made by replacing letters of `word` with neighbouring keys, fewest slips first:
+  /// stops at the first number of slips that finds a known word, so `fubktiojiert` reaches
+  /// `funktioniert` without UITextChecker having to propose it. `maxSlips` stops early when a
+  /// cheaper proposal is already known. A level whose variants don't fit in `budget` lookups is
+  /// dropped whole, since a partial search could miss the rival that makes it ambiguous.
+  static func neighborSlipCandidates(for word: String, maxSlips: Int, budget: Int = 2_500,
+                                     isKnown: (String) -> Bool) -> [String] {
+    let characters = Array(word)
+    let limit = min(maxSlips, maxNeighborSlips(forLength: characters.count))
+    guard limit > 0 else { return [] }
+    let titleCase = word != word.lowercased()
+    // Lowercase neighbours per position; the first one is capitalised again for title case.
+    let options: [[Character]] = characters.enumerated().map { index, character in
+      let lower = Character(character.lowercased())
+      return (keyNeighbors[lower] ?? []).sorted().map { neighbor in
+        index == 0 && titleCase ? Character(neighbor.uppercased()) : neighbor
+      }
+    }
+    var used = 0
+    for slips in 1...limit {
+      var positions = Array(0..<slips)
+      var variants = 0
+      var combinationsPossible = true
+      // Count first, so an oversized level is skipped before any lookup.
+      while combinationsPossible {
+        variants += positions.reduce(1) { $0 * options[$1].count }
+        combinationsPossible = nextCombination(&positions, upTo: characters.count)
+      }
+      guard used + variants <= budget else { return [] }
+      used += variants
+      var found: [String] = []
+      positions = Array(0..<slips)
+      combinationsPossible = true
+      while combinationsPossible {
+        var picks = Array(repeating: 0, count: slips)
+        var morePicks = positions.allSatisfy { !options[$0].isEmpty }
+        while morePicks {
+          var variant = characters
+          for (slot, position) in positions.enumerated() { variant[position] = options[position][picks[slot]] }
+          let text = String(variant)
+          if isKnown(text) { found.append(text) }
+          // Next neighbour choice, like an odometer.
+          morePicks = false
+          for slot in picks.indices.reversed() {
+            picks[slot] += 1
+            if picks[slot] < options[positions[slot]].count { morePicks = true; break }
+            picks[slot] = 0
+          }
+        }
+        combinationsPossible = nextCombination(&positions, upTo: characters.count)
+      }
+      if !found.isEmpty { return found }
+    }
+    return []
+  }
+
+  /// Advances `positions` to the next ascending combination below `count`; false at the end.
+  private static func nextCombination(_ positions: inout [Int], upTo count: Int) -> Bool {
+    var slot = positions.count - 1
+    while slot >= 0 && positions[slot] == count - positions.count + slot { slot -= 1 }
+    guard slot >= 0 else { return false }
+    positions[slot] += 1
+    for next in (slot + 1)..<positions.count { positions[next] = positions[next - 1] + 1 }
+    return true
   }
 }
 

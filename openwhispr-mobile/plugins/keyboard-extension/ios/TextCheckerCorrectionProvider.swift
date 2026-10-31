@@ -15,6 +15,8 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   let letters: Set<Character>
   private let dictionaries: [String]
   private let checker = UITextChecker()
+  /// How long a space press may spend looking up neighbouring-key variants.
+  static let slipSearchNanoseconds: UInt64 = 80_000_000
   private let log = Logger(subsystem: "com.gizmolabs.openwhispr.keyboard", category: "Autocorrection")
 
   init(languages: [KeyboardCorrectionLanguage]) {
@@ -64,10 +66,37 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
         suggestions.append(candidate)
       }
     }
+    // UITextChecker rarely proposes words several neighbouring-key slips away (`njxbt` →
+    // `nicht`), so try those variants against the dictionaries too, unless a one-edit proposal
+    // already exists (nothing with more slips could beat it).
+    let cheapest = suggestions.compactMap { KeyboardCorrectionRules.editCost(from: word, to: $0) }.min()
+    var generated = 0
+    var timedOut = false
+    if cheapest != 1 {
+      let maxSlips = cheapest ?? KeyboardCorrectionRules.maxNeighborSlips(forLength: word.count)
+      // The space press waits for this; past the deadline the search is abandoned whole
+      // (an unfinished search could miss the rival that makes a word ambiguous).
+      let deadline = DispatchTime.now().uptimeNanoseconds + Self.slipSearchNanoseconds
+      let found = KeyboardCorrectionRules.neighborSlipCandidates(
+        for: word, maxSlips: maxSlips,
+        isKnown: { variant in
+          guard !timedOut, DispatchTime.now().uptimeNanoseconds < deadline else {
+            timedOut = true
+            return false
+          }
+          return dictionaries.contains { isKnown(variant, in: $0) }
+        })
+      if !timedOut {
+        for candidate in found where !suggestions.contains(candidate) {
+          suggestions.append(candidate)
+          generated += 1
+        }
+      }
+    }
     let eligible = KeyboardCorrectionRules.replacement(
       for: word, suggestions: suggestions, letters: letters) != nil
     // Only control-flow metadata, never the original, proposals or surrounding text.
-    log.info("Autocorrection proposals: dictionaries=\(self.dictionaries.count, privacy: .public) dictionaryCount=\(suggestions.count, privacy: .public) uniqueEligible=\(eligible, privacy: .public)")
+    log.info("Autocorrection proposals: dictionaries=\(self.dictionaries.count, privacy: .public) dictionaryCount=\(suggestions.count, privacy: .public) neighborSlips=\(generated, privacy: .public) slipSearchTimedOut=\(timedOut, privacy: .public) uniqueEligible=\(eligible, privacy: .public)")
     return suggestions
   }
 }

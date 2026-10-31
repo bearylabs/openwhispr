@@ -94,6 +94,62 @@ private enum KeyboardAutocorrectionTests {
       for: "Bnad", suggestions: ["Band", "Brad"]) == nil)
     check("english contraction excluded", !KeyboardCorrectionRules.isWord("don't"))
 
+    // Neighbouring-key slips (QWERTY rows as the keyboard draws them).
+    check("n and b are neighbours", KeyboardCorrectionRules.areNeighborKeys("n", "b"))
+    check("n and j are neighbours", KeyboardCorrectionRules.areNeighborKeys("n", "j"))
+    check("i and j are neighbours", KeyboardCorrectionRules.areNeighborKeys("i", "j"))
+    check("h and b are neighbours", KeyboardCorrectionRules.areNeighborKeys("h", "b"))
+    check("case does not matter", KeyboardCorrectionRules.areNeighborKeys("N", "b"))
+    check("a and l are not neighbours", !KeyboardCorrectionRules.areNeighborKeys("a", "l"))
+    check("neighbours are symmetric", KeyboardCorrectionRules.keyNeighbors.allSatisfy { key, others in
+      others.allSatisfy { KeyboardCorrectionRules.keyNeighbors[$0]?.contains(key) == true } })
+    check("two slips in a long word", KeyboardCorrectionRules.replacement(
+      for: "fubktiojiert", suggestions: ["funktioniert"]) == "funktioniert")
+    check("three slips in five letters", KeyboardCorrectionRules.replacement(
+      for: "njxbt", suggestions: ["nicht"]) == "nicht")
+    check("two slips in four letters", KeyboardCorrectionRules.replacement(
+      for: "hsbd", suggestions: ["hand"]) == "hand")
+    check("three slips in four letters excluded", KeyboardCorrectionRules.replacement(
+      for: "jsbd", suggestions: ["hand"]) == nil)
+    check("four slips excluded", KeyboardCorrectionRules.replacement(
+      for: "njxbr", suggestions: ["nicht"]) == nil)
+    check("a far-away wrong letter is no slip", KeyboardCorrectionRules.replacement(
+      for: "nacgt", suggestions: ["nicht"]) == nil)
+    check("fewer edits win", KeyboardCorrectionRules.replacement(
+      for: "njcht", suggestions: ["bucht", "nicht"]) == "nicht")
+    check("a tie at the fewest edits stays ambiguous", KeyboardCorrectionRules.replacement(
+      for: "nich", suggestions: ["nicht", "noch", "bucht"]) == nil)
+    check("title case slip", KeyboardCorrectionRules.replacement(
+      for: "Hsbd", suggestions: ["Hand"]) == "Hand")
+    check("three-letter words still get no substitutions",
+          KeyboardCorrectionRules.replacement(for: "teh", suggestions: ["the", "ten"]) == "the")
+
+    let lexicon: Set<String> = ["nicht", "funktioniert", "Hand", "hand", "bucht"]
+    var lookups = 0
+    func known(_ word: String) -> Bool { lookups += 1; return lexicon.contains(word) }
+    check("generator finds three slips", KeyboardCorrectionRules.neighborSlipCandidates(
+      for: "njxbt", maxSlips: 3, isKnown: known) == ["nicht"])
+    check("generator finds two slips in a long word", KeyboardCorrectionRules.neighborSlipCandidates(
+      for: "fubktiojiert", maxSlips: 3, isKnown: known) == ["funktioniert"])
+    check("generator keeps title case", KeyboardCorrectionRules.neighborSlipCandidates(
+      for: "Hsbd", maxSlips: 2, isKnown: known) == ["Hand"])
+    lookups = 0
+    check("generator stops at the first level with a hit", KeyboardCorrectionRules.neighborSlipCandidates(
+      for: "njcht", maxSlips: 3, isKnown: known) == ["nicht"] && lookups < 60)
+    check("generator honours maxSlips", KeyboardCorrectionRules.neighborSlipCandidates(
+      for: "njxbt", maxSlips: 2, isKnown: known).isEmpty)
+    check("generator skips three-letter words", KeyboardCorrectionRules.neighborSlipCandidates(
+      for: "teh", maxSlips: 3, isKnown: { _ in true }).isEmpty)
+    lookups = 0
+    check("generator drops a level over budget", KeyboardCorrectionRules.neighborSlipCandidates(
+      for: "fubktiojiert", maxSlips: 3, budget: 100, isKnown: known).isEmpty && lookups < 100)
+    lookups = 0
+    _ = KeyboardCorrectionRules.neighborSlipCandidates(
+      for: "abcdefghijkl", maxSlips: 3, isKnown: known)
+    check("generator stays within its budget", lookups <= 2_500)
+    check("generator leaves umlaut positions alone", KeyboardCorrectionRules.neighborSlipCandidates(
+      for: "Mädcehn", maxSlips: 3, isKnown: { $0.contains("ä") == false }).isEmpty)
+
     // The app's language selection ("de,en" in the App Group).
     let german = KeyboardCorrectionLanguage.german, english = KeyboardCorrectionLanguage.english
     check("missing selection is German and English",

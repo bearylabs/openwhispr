@@ -56,13 +56,25 @@ still needs host/dictionary investigation; changing the default alone does not p
 - Only the selected languages' letters count (German: a–z and äöüß, English: a–z), limited
   further to languages whose dictionary is installed. With English alone, a word with an
   umlaut is left as typed.
-  Ranking first is not enough: `KeyboardCorrectionRules` requires exactly one distinct
-  nearby candidate, preserving lowercase/title case and using 3–20 of those letters.
-  Adjacent swaps now include word edges (`udn` → `und`, `nicth` → `nicht`). For words
-  with at least four letters on both sides, one wrong, missing or extra letter also
-  qualifies (`nucht` → `nicht`, `nich` → `nicht`, `Halllo` → `Hallo`). More than one
-  eligible proposal means no replacement, even when one is ranked first. Multiple edits,
-  case changes and one-letter substitutions in three-letter words remain excluded.
+  Ranking first is not enough: `KeyboardCorrectionRules` scores each nearby candidate,
+  preserving lowercase/title case and using 3–20 of those letters, and replaces only when
+  exactly one candidate has the fewest edits. One edit: a swap of two adjacent letters,
+  including word edges (`udn` → `und`, `nicth` → `nicht`), or, for words with at least four
+  letters on both sides, one wrong, missing or extra letter (`nucht` → `nicht`,
+  `nich` → `nicht`, `Halllo` → `Hallo`).
+- **Neighbouring-key slips** (accepted for more corrections at a higher risk of wrong ones):
+  several wrong letters count when every one is a key touching the right one on the keyboard's
+  QWERTY rows (`KeyboardCorrectionRules.keyNeighbors`: either side in a row, the two
+  overlapping keys of the next top row, the key straight below/above for the bottom row). Up
+  to two in four-letter words, three from five letters (`fubktiojiert` → `funktioniert`,
+  `njxbt` → `nicht`); each slip costs one edit, so a one-edit candidate still wins. Three-letter
+  words get no substitutions at all, so `teh` stays `the` rather than `ten`.
+- UITextChecker rarely proposes such distant words, so when no one-edit proposal exists the
+  provider also builds the neighbouring-key variants itself (`neighborSlipCandidates`, fewest
+  slips first, stopping at the first level with a known word) and keeps those a selected
+  dictionary knows. A level of more than 2,500 variants is skipped whole (words over six
+  letters get at most two slips searched), and the whole search is dropped after 80 ms, so a
+  space press never waits longer; an abandoned search corrects nothing.
   These broader rules may produce more false positives; immediately backspace to undo.
   Actual candidates depend on the OS dictionary; the prototype may deliberately do nothing.
 - Digits, punctuation, underscores, mixed/all caps, URL/email-like tokens, emoji and
@@ -195,14 +207,17 @@ A native rebuild is required; a JS-only update is insufficient.
 3. Languages: deselect English → `teh` + space stays `teh `, `nciht` still → `nicht`.
    Select only English → `nciht` may become an English word or stay, `Mädcehn` stays as typed,
    `teh` → `the`. The last selected language can't be deselected.
-4. Test on at least Notes, Messages and a Safari textarea/contenteditable, with fast typing
+4. Neighbouring keys: `fubktiojiert` → `funktioniert`, `njxbt` → `nicht`, `hsbd` → `hand`;
+   backspace restores each. Long words with three slips, umlauts mistyped, names and slang
+   may stay or become a wrong word; backspace right after undoes it.
+5. Test on at least Notes, Messages and a Safari textarea/contenteditable, with fast typing
    and delayed host updates. No correction is preferable to any wrong-location replacement.
-5. Move the cursor, select text, switch fields/apps/documents/keyboards, dismiss/reopen the
+6. Move the cursor, select text, switch fields/apps/documents/keyboards, dismiss/reopen the
    keyboard, edit using another input source, and test undo after each. No stale replacement.
-6. Test `.no`, password, URL, email and opaque fields; `foo_bar`, `fooBar`, addresses, numbers,
+7. Test `.no`, password, URL, email and opaque fields; `foo_bar`, `fooBar`, addresses, numbers,
    emoji surrounding a word, `ä/ö/ü/ß`, and decomposed accented characters. Exclusions stay intact.
-7. Dictate and insert an assistant answer containing a typo, then space: output stays unchanged.
+8. Dictate and insert an assistant answer containing a typo, then space: output stays unchanged.
    Verify smart quotes, shift, double-space period, ordinary/held/accelerated backspace,
    landscape, and no lost/duplicated fast taps. Dismiss and reopen: correction stays available.
-8. Where neither German nor English is available, typing must work without correction. Dictionary proposals
+9. Where neither German nor English is available, typing must work without correction. Dictionary proposals
    and timing are OS-dependent and are not proven by the stub-provider controller tests.

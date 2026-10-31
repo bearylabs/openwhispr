@@ -626,6 +626,14 @@ private enum KeyboardTouchTests {
     checks.check("english undo", TestEnvironment.proxy.documentContextBeforeInput == "teh")
 
     controller = keyboard()
+    controller.touchTestSetProvider(CorrectionStub(words: ["funktioniert"]))
+    controller.touchTestTypeWord("fubktiojiert")
+    controller.touchTestTapSpace()
+    checks.check("neighbouring-key slips corrected", TestEnvironment.proxy.documentContextBeforeInput == "funktioniert ")
+    controller.touchTestTapDelete()
+    checks.check("neighbouring-key slips undo", TestEnvironment.proxy.documentContextBeforeInput == "fubktiojiert")
+
+    controller = keyboard()
     TestEnvironment.proxy.autocorrectionType = .no
     controller.touchTestTypeWord("nciht")
     controller.touchTestTapSpace()
