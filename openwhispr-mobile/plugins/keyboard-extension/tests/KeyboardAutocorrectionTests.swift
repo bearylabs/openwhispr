@@ -15,9 +15,10 @@ private struct SelectionProvider: KeyboardCorrectionProvider {
 @main
 private enum KeyboardAutocorrectionTests {
   static var count = 0
+  static var failed = 0
   static func check(_ label: String, _ value: Bool) {
     count += 1
-    precondition(value, label)
+    if !value { print("FAIL: \(label)"); failed += 1 }
   }
 
   static func context(_ before: String? = "", after: String? = "", selection: String? = nil,
@@ -47,8 +48,8 @@ private enum KeyboardAutocorrectionTests {
       for: "nciht", suggestions: ["nicht", "nicht"]) == "nicht")
     check("first guess is not evidence", KeyboardCorrectionRules.replacement(
       for: "nciht", suggestions: ["Nacht"]) == nil)
-    check("ambiguous swaps", KeyboardCorrectionRules.replacement(
-      for: "abcde", suggestions: ["acbde", "abdce"]) == nil)
+    check("tied swaps go to the first (most common) proposal", KeyboardCorrectionRules.replacement(
+      for: "abcde", suggestions: ["acbde", "abdce"]) == "acbde")
     check("umlaut swap", KeyboardCorrectionRules.replacement(
       for: "Mädcehn", suggestions: ["Mädchen"]) == "Mädchen")
     check("eszett swap", KeyboardCorrectionRules.replacement(
@@ -69,12 +70,16 @@ private enum KeyboardAutocorrectionTests {
       for: "Halllo", suggestions: ["Hallo"]) == "Hallo")
     check("umlaut substitution", KeyboardCorrectionRules.replacement(
       for: "Mödchen", suggestions: ["Mädchen"]) == "Mädchen")
-    check("ambiguous edit kinds", KeyboardCorrectionRules.replacement(
-      for: "nich", suggestions: ["nicht", "noch"]) == nil)
-    check("ranking does not resolve ambiguity", KeyboardCorrectionRules.replacement(
-      for: "nich", suggestions: ["noch", "nicht"]) == nil)
-    check("two edits excluded", KeyboardCorrectionRules.replacement(
-      for: "ncih", suggestions: ["nicht"]) == nil)
+    check("without frequency a slip beats a missing letter", KeyboardCorrectionRules.replacement(
+      for: "nich", suggestions: ["nicht", "noch"]) == "noch")
+    check("a far commoner word beats the slip", KeyboardCorrectionRules.replacement(
+      for: "nich", suggestions: ["noch", "nicht"], rank: { $0 == "nicht" ? 0 : 30 }) == "nicht")
+    check("proposal order breaks the tie", KeyboardCorrectionRules.replacement(
+      for: "nich", suggestions: ["noch", "nicht"]) == "noch")
+    check("swap plus missing letter", KeyboardCorrectionRules.replacement(
+      for: "ncih", suggestions: ["nicht"]) == "nicht")
+    check("too many edits for a short word", KeyboardCorrectionRules.replacement(
+      for: "ncxh", suggestions: ["nicht"]) == nil)
     check("short substitution excluded", KeyboardCorrectionRules.replacement(
       for: "unt", suggestions: ["und"]) == nil)
     check("unchanged word excluded", KeyboardCorrectionRules.replacement(
@@ -90,8 +95,8 @@ private enum KeyboardAutocorrectionTests {
       for: "Thsi", suggestions: ["This", "this"]) == "This")
     check("german and english proposals together stay unique", KeyboardCorrectionRules.replacement(
       for: "nciht", suggestions: ["nicht", "night", "niche"]) == "nicht")
-    check("one proposal per language is ambiguous", KeyboardCorrectionRules.replacement(
-      for: "Bnad", suggestions: ["Band", "Brad"]) == nil)
+    check("a swap beats a far-away letter across languages", KeyboardCorrectionRules.replacement(
+      for: "Bnad", suggestions: ["Brad", "Band"]) == "Band")
     check("english contraction excluded", !KeyboardCorrectionRules.isWord("don't"))
 
     // Neighbouring-key slips (QWERTY rows as the keyboard draws them).
@@ -113,12 +118,35 @@ private enum KeyboardAutocorrectionTests {
       for: "jsbd", suggestions: ["hand"]) == nil)
     check("four slips excluded", KeyboardCorrectionRules.replacement(
       for: "njxbr", suggestions: ["nicht"]) == nil)
-    check("a far-away wrong letter is no slip", KeyboardCorrectionRules.replacement(
-      for: "nacgt", suggestions: ["nicht"]) == nil)
+    check("a far-away wrong letter costs two edits", KeyboardCorrectionRules.replacement(
+      for: "nacgt", suggestions: ["nicht"]) == "nicht")
+    check("a sideways slip beats a far-away letter", KeyboardCorrectionRules.replacement(
+      for: "hamd", suggestions: ["hard", "hand"]) == "hand")
+    check("sideways slips beat diagonal ones", KeyboardCorrectionRules.replacement(
+      for: "hsbd", suggestions: ["habe", "hebe", "hand"]) == "hand")
+    check("umlaut slip", KeyboardCorrectionRules.replacement(
+      for: "Madchen", suggestions: ["Mädchen"]) == "Mädchen")
+    check("costs are weighted", KeyboardCorrectionRules.editCost(from: "hsbd", to: "hand") == 2
+      && KeyboardCorrectionRules.editCost(from: "hsbd", to: "habe") == 2.5
+      && KeyboardCorrectionRules.editCost(from: "unt", to: "und") == nil)
     check("fewer edits win", KeyboardCorrectionRules.replacement(
       for: "njcht", suggestions: ["bucht", "nicht"]) == "nicht")
-    check("a tie at the fewest edits stays ambiguous", KeyboardCorrectionRules.replacement(
-      for: "nich", suggestions: ["nicht", "noch", "bucht"]) == nil)
+    check("a tie at the fewest edits goes to the first", KeyboardCorrectionRules.replacement(
+      for: "hsbd", suggestions: ["habs", "hand"]) == "habs")
+    // Frequency: half an edit per doubling of the rank (0 = most common).
+    let ranks = ["hand": 40, "habs": 9_000, "habe": 3, "hebe": 12_000, "nicht": 0, "nucht": 20_000]
+    func rank(_ word: String) -> Int? { ranks[word] }
+    check("a common word beats a rarer equally close one", KeyboardCorrectionRules.replacement(
+      for: "hsbd", suggestions: ["habs", "hand"], rank: rank) == "hand")
+    check("a much commoner word beats a slightly closer one", KeyboardCorrectionRules.replacement(
+      for: "hsbd", suggestions: ["hand", "habe"], rank: rank) == "habe")
+    check("unranked words fall back to the edit cost", KeyboardCorrectionRules.replacement(
+      for: "hsbd", suggestions: ["habe", "hand"], rank: { _ in nil }) == "hand")
+    check("an unranked word loses to a ranked common one", KeyboardCorrectionRules.replacement(
+      for: "nixht", suggestions: ["nicjt", "nicht"], rank: { $0 == "nicht" ? 0 : nil }) == "nicht")
+    check("scores grow with rank", KeyboardCorrectionRules.score(cost: 1, rank: 0)
+      < KeyboardCorrectionRules.score(cost: 1, rank: 100)
+      && KeyboardCorrectionRules.score(cost: 1, rank: nil) == KeyboardCorrectionRules.score(cost: 1, rank: 1_000_000))
     check("title case slip", KeyboardCorrectionRules.replacement(
       for: "Hsbd", suggestions: ["Hand"]) == "Hand")
     check("three-letter words still get no substitutions",
@@ -134,21 +162,46 @@ private enum KeyboardAutocorrectionTests {
     check("generator keeps title case", KeyboardCorrectionRules.neighborSlipCandidates(
       for: "Hsbd", maxSlips: 2, isKnown: known) == ["Hand"])
     lookups = 0
-    check("generator stops at the first level with a hit", KeyboardCorrectionRules.neighborSlipCandidates(
-      for: "njcht", maxSlips: 3, isKnown: known) == ["nicht"] && lookups < 60)
+    check("generator collects every level, fewest slips first", KeyboardCorrectionRules.neighborSlipCandidates(
+      for: "njcht", maxSlips: 3, isKnown: known) == ["nicht", "bucht"])
     check("generator honours maxSlips", KeyboardCorrectionRules.neighborSlipCandidates(
       for: "njxbt", maxSlips: 2, isKnown: known).isEmpty)
-    check("generator skips three-letter words", KeyboardCorrectionRules.neighborSlipCandidates(
-      for: "teh", maxSlips: 3, isKnown: { _ in true }).isEmpty)
+    check("generator tries one slip in three-letter words", KeyboardCorrectionRules.neighborSlipCandidates(
+      for: "ubd", maxSlips: 3, isKnown: { $0 == "und" }) == ["und"])
+    check("generator skips two-letter words", KeyboardCorrectionRules.neighborSlipCandidates(
+      for: "ub", maxSlips: 3, isKnown: { _ in true }).isEmpty)
     lookups = 0
     check("generator drops a level over budget", KeyboardCorrectionRules.neighborSlipCandidates(
       for: "fubktiojiert", maxSlips: 3, budget: 100, isKnown: known).isEmpty && lookups < 100)
     lookups = 0
     _ = KeyboardCorrectionRules.neighborSlipCandidates(
       for: "abcdefghijkl", maxSlips: 3, isKnown: known)
-    check("generator stays within its budget", lookups <= 2_500)
+    check("generator stays within its budget", lookups <= 1_500)
+    lookups = 0
+    var stops = 0
+    check("generator drops a level cut short", KeyboardCorrectionRules.neighborSlipCandidates(
+      for: "njcht", maxSlips: 3, shouldStop: { stops += 1; return stops > 30 }, isKnown: known) == ["nicht"])
     check("generator leaves umlaut positions alone", KeyboardCorrectionRules.neighborSlipCandidates(
       for: "Mädcehn", maxSlips: 3, isKnown: { $0.contains("ä") == false }).isEmpty)
+
+    // Single edits the slip search adds when UITextChecker proposes nothing.
+    let editLexicon: Set<String> = ["the", "nicht", "klappt", "Hallo", "und", "hallo"]
+    func editKnown(_ word: String) -> Bool { editLexicon.contains(word) }
+    let latinLetters = KeyboardCorrectionLanguage.letters(of: [.german, .english])
+    check("single edit: swap", KeyboardCorrectionRules.singleEditCandidates(
+      for: "teh", letters: latinLetters, isKnown: editKnown) == ["the"])
+    check("single edit: inner swap", KeyboardCorrectionRules.singleEditCandidates(
+      for: "kalppt", letters: latinLetters, isKnown: editKnown) == ["klappt"])
+    check("single edit: missing letter", KeyboardCorrectionRules.singleEditCandidates(
+      for: "nich", letters: latinLetters, isKnown: editKnown) == ["nicht"])
+    check("single edit: extra letter", KeyboardCorrectionRules.singleEditCandidates(
+      for: "nichtt", letters: latinLetters, isKnown: editKnown) == ["nicht"])
+    check("single edit: title case keeps its first letter", KeyboardCorrectionRules.singleEditCandidates(
+      for: "Hlalo", letters: latinLetters, isKnown: editKnown) == ["Hallo"])
+    check("single edit: never the word itself", KeyboardCorrectionRules.singleEditCandidates(
+      for: "unnd", letters: latinLetters, isKnown: { $0 == "unnd" || $0 == "und" }) == ["und"])
+    check("single edit: stop gives nothing", KeyboardCorrectionRules.singleEditCandidates(
+      for: "kalppt", letters: latinLetters, shouldStop: { true }, isKnown: editKnown).isEmpty)
 
     // The app's language selection ("de,en" in the App Group).
     let german = KeyboardCorrectionLanguage.german, english = KeyboardCorrectionLanguage.english
@@ -304,6 +357,10 @@ private enum KeyboardAutocorrectionTests {
       in: germanOnly.1, provider: SelectionProvider(
         words: ["Mädchen"], letters: KeyboardCorrectionLanguage.letters(of: [german])))
     check("german selection corrects umlaut word", germanEdit?.replacement == "Mädchen")
+    if failed > 0 {
+      print("Keyboard autocorrection: \(failed) of \(count) checks failed")
+      exit(1)
+    }
     print("Keyboard autocorrection: \(count) checks passed")
   }
 }

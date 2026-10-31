@@ -76,10 +76,13 @@ protocol KeyboardCorrectionProvider {
   func suggestions(for word: String) -> [String]
   /// The letters of the languages it corrects; words with any other letter are left alone.
   var letters: Set<Character> { get }
+  /// How common a proposal is (0 = most common), or nil when unknown.
+  func frequencyRank(of candidate: String) -> Int?
 }
 
 extension KeyboardCorrectionProvider {
   var letters: Set<Character> { KeyboardCorrectionRules.defaultLetters }
+  func frequencyRank(of candidate: String) -> Int? { nil }
 }
 
 enum KeyboardCorrectionRules {
@@ -103,16 +106,20 @@ enum KeyboardCorrectionRules {
     ("qwertyuiop", 0), ("asdfghjkl", 0.5), ("zxcvbnm", 1.5),
   ]
 
-  /// Keys that touch on the drawn layout: either side in a row, and the keys of the next row
-  /// that overlap it (two from the top rows, the one straight below/above for the bottom row).
-  static let keyNeighbors: [Character: Set<Character>] = {
+  private static let keyCentres: [Character: (row: Int, x: Double)] = {
     var centres: [Character: (row: Int, x: Double)] = [:]
     for (row, line) in keyRows.enumerated() {
       for (index, key) in line.keys.enumerated() { centres[key] = (row, Double(index) + line.offset) }
     }
+    return centres
+  }()
+
+  /// Keys that touch on the drawn layout: either side in a row, and the keys of the next row
+  /// that overlap it (two from the top rows, the one straight below/above for the bottom row).
+  static let keyNeighbors: [Character: Set<Character>] = {
     var neighbors: [Character: Set<Character>] = [:]
-    for (key, a) in centres {
-      neighbors[key] = Set(centres.compactMap { other, b in
+    for (key, a) in keyCentres {
+      neighbors[key] = Set(keyCentres.compactMap { other, b in
         guard other != key else { return nil }
         let dx = abs(a.x - b.x)
         if a.row == b.row { return dx == 1 ? other : nil }
@@ -127,68 +134,150 @@ enum KeyboardCorrectionRules {
     return keyNeighbors[lowerA]?.contains(lowerB) == true
   }
 
-  /// How many letters may be neighbouring-key slips: none in three-letter words (`teh` stays
-  /// `the`, never `ten`), two in four-letter words, three from five letters on.
+  /// How many letters the neighbouring-key search replaces: one in three-letter words, two in
+  /// four-letter words, three from five letters on.
   static func maxNeighborSlips(forLength length: Int) -> Int {
-    length >= 5 ? 3 : length == 4 ? 2 : 0
+    length >= 5 ? 3 : length == 4 ? 2 : length == 3 ? 1 : 0
   }
 
-  /// The edits from `word` to `candidate`, or nil when it is too far: 1 for a swap of two
-  /// adjacent letters, one wrong letter (four letters and up), or one missing or extra letter;
-  /// otherwise the number of wrong letters when every one is a neighbouring key.
-  static func editCost(from word: String, to candidate: String) -> Int? {
-    let source = Array(word), target = Array(candidate)
-    if source.count == target.count {
-      let changed = source.indices.filter { source[$0] != target[$0] }
-      guard !changed.isEmpty else { return nil }
-      // Adjacent swaps may include the first or last letter, even in short words.
-      if changed.count == 2, changed[1] == changed[0] + 1,
-         source[changed[0]] == target[changed[1]], source[changed[1]] == target[changed[0]] {
-        return 1
-      }
-      // Still avoid ordinary substitutions in very short words.
-      if source.count >= 4 && changed.count == 1 { return 1 }
-      guard changed.count <= maxNeighborSlips(forLength: source.count),
-            changed.allSatisfy({ areNeighborKeys(source[$0], target[$0]) }) else { return nil }
-      return changed.count
+  // Edit weights, tuned with the frequency weight below on the 50,000 most common German and
+  // English words and random typos (70% sideways). A slip sideways in a row is the commonest
+  // typo; a slip to the row above or below less likely; a letter for its umlaut (a↔ä, o↔ö, u↔ü, s↔ß) counts like a
+  // slip; any other wrong key costs two edits. A swap of adjacent letters costs one, a missing
+  // or extra letter one and a half (otherwise dropping a letter of a common short word wins
+  // too often).
+  static let rowSlipCost = 1.0
+  static let insertDeleteCost = 1.5
+  static let diagonalSlipCost = 1.5
+  static let otherLetterCost = 2.0
+  private static let umlauts: Set<String> = ["aä", "äa", "oö", "öo", "uü", "üu", "sß", "ßs"]
+
+  static func substitutionCost(_ a: Character, _ b: Character) -> Double {
+    let lowerA = Character(a.lowercased()), lowerB = Character(b.lowercased())
+    if lowerA == lowerB { return 0 }
+    if umlauts.contains(String([lowerA, lowerB])) { return rowSlipCost }
+    guard keyNeighbors[lowerA]?.contains(lowerB) == true,
+          let centreA = keyCentres[lowerA], let centreB = keyCentres[lowerB] else { return otherLetterCost }
+    return centreA.row == centreB.row ? rowSlipCost : diagonalSlipCost
+  }
+
+  /// The most edit weight a word may need: one slip (diagonal included) in three letters; two
+  /// slips in four letters (not two diagonal ones); three in five or six letters (at most two
+  /// diagonal); four from seven letters on. A wrong far-away letter counts as two slips.
+  static func maxEditCost(forLength length: Int) -> Double {
+    switch length {
+    case ..<3: return 0
+    case 3: return 1.5
+    case 4: return 2.5
+    case 5, 6: return 4.0
+    default: return 5.0
     }
-    guard min(source.count, target.count) >= 4,
-          abs(source.count - target.count) == 1 else { return nil }
-    let longer = source.count > target.count ? source : target
-    let shorter = source.count > target.count ? target : source
-    // One extra/missing Character, not a UTF-16 code unit. Check only the first
-    // mismatch; skipping any other position cannot make the two sequences equal.
-    let mismatch = shorter.indices.first { longer[$0] != shorter[$0] } ?? shorter.count
-    var withoutExtra = longer
-    withoutExtra.remove(at: mismatch)
-    return withoutExtra == shorter ? 1 : nil
   }
 
+  /// Weighted edit distance (optimal string alignment: substitutions by key distance,
+  /// insertions, deletions and swaps of adjacent letters), or nil when the words are equal or
+  /// further apart than `maxEditCost` allows for the typed word.
+  static func editCost(from word: String, to candidate: String) -> Double? {
+    let source = Array(word), target = Array(candidate)
+    let limit = maxEditCost(forLength: source.count)
+    guard source != target,
+          Double(abs(source.count - target.count)) * insertDeleteCost <= limit + 1e-9 else { return nil }
+    var table = Array(repeating: Array(repeating: 0.0, count: target.count + 1), count: source.count + 1)
+    for i in 0...source.count { table[i][0] = Double(i) * insertDeleteCost }
+    for j in 0...target.count { table[0][j] = Double(j) * insertDeleteCost }
+    for i in stride(from: 1, through: source.count, by: 1) {
+      for j in stride(from: 1, through: target.count, by: 1) {
+        var best = min(table[i - 1][j] + insertDeleteCost, table[i][j - 1] + insertDeleteCost,
+                       table[i - 1][j - 1] + substitutionCost(source[i - 1], target[j - 1]))
+        if i > 1, j > 1, source[i - 1] == target[j - 2], source[i - 2] == target[j - 1] {
+          best = min(best, table[i - 2][j - 2] + 1)
+        }
+        table[i][j] = best
+      }
+    }
+    let cost = table[source.count][target.count]
+    return cost <= limit + 1e-9 ? cost : nil
+  }
+
+  /// 0.3 edits per doubling of a word's frequency rank: a common word wins over a rarer one
+  /// that is slightly closer (`hsbd` → `habe` rather than `hand` or `habs`). Tuned with the
+  /// edit weights above on mixed typos (slips, swaps, missing and extra letters). An unknown rank
+  /// counts as fairly rare, so between unranked words the edit cost decides.
+  static let frequencyWeight = 0.3
+  static let unrankedFrequencyRank = 20_000
+
+  static func score(cost: Double, rank: Int?) -> Double {
+    cost + frequencyWeight * log2(Double(min(rank ?? unrankedFrequencyRank, unrankedFrequencyRank)) + 1)
+  }
+
+  /// The eligible candidate with the lowest score (edit cost plus frequency); a tie goes to the
+  /// earliest in `suggestions`. More corrections, at the risk of picking the wrong word of two;
+  /// backspace right after undoes it.
   static func replacement(for word: String, suggestions: [String],
-                          letters: Set<Character> = KeyboardCorrectionRules.defaultLetters) -> String? {
+                          letters: Set<Character> = KeyboardCorrectionRules.defaultLetters,
+                          rank: (String) -> Int? = { _ in nil }) -> String? {
     guard isWord(word, letters: letters) else { return nil }
-    var best: (cost: Int, words: Set<String>)?
-    for candidate in Set(suggestions) {
+    var best: (word: String, score: Double)?
+    var seen = Set<String>()
+    for candidate in suggestions where seen.insert(candidate).inserted {
       guard isWord(candidate, letters: letters),
             (word == word.lowercased()) == (candidate == candidate.lowercased()),
             let cost = editCost(from: word, to: candidate) else { continue }
-      if best == nil || cost < best!.cost {
-        best = (cost, [candidate])
-      } else if cost == best!.cost {
-        best!.words.insert(candidate)
-      }
+      let candidateScore = score(cost: cost, rank: rank(candidate))
+      if best == nil || candidateScore < best!.score - 1e-9 { best = (candidate, candidateScore) }
     }
-    // The fewest edits win; a tie stays untouched, irrespective of provider ranking.
-    guard let best, best.words.count == 1 else { return nil }
-    return best.words.first
+    return best?.word
   }
 
-  /// Words made by replacing letters of `word` with neighbouring keys, fewest slips first:
-  /// stops at the first number of slips that finds a known word, so `fubktiojiert` reaches
-  /// `funktioniert` without UITextChecker having to propose it. `maxSlips` stops early when a
-  /// cheaper proposal is already known. A level whose variants don't fit in `budget` lookups is
-  /// dropped whole, since a partial search could miss the rival that makes it ambiguous.
-  static func neighborSlipCandidates(for word: String, maxSlips: Int, budget: Int = 2_500,
+  /// Known words made by replacing up to `maxSlips` letters of `word` with neighbouring keys,
+  /// one level of slips after the other, since a common word with more slips can still win
+  /// (`fubktiojiert` → `funktioniert` without UITextChecker proposing it). A level whose
+  /// variants would push the total past `budget` lookups is skipped with all after it, and a
+  /// level cut short by `shouldStop` is dropped whole: an unfinished level could miss a closer
+  /// word than the one it found.
+  /// Known words one swap of adjacent letters, one missing letter (from `letters`) or one
+  /// extra letter away. UITextChecker usually proposes these but not always (`kalppt` →
+  /// `klappt`). The first letter keeps its case, so a title-case word is never edited there.
+  static func singleEditCandidates(for word: String, letters: Set<Character>,
+                                   shouldStop: () -> Bool = { false },
+                                   isKnown: (String) -> Bool) -> [String] {
+    let characters = Array(word)
+    guard characters.count >= 3 else { return [] }
+    let titleCase = word != word.lowercased()
+    let start = titleCase ? 1 : 0
+    var variants: [[Character]] = []
+    for index in start..<(characters.count - 1) where characters[index] != characters[index + 1] {
+      var swapped = characters
+      swapped.swapAt(index, index + 1)
+      variants.append(swapped)
+    }
+    if characters.count >= 4 {
+      for index in start..<characters.count {
+        var shorter = characters
+        shorter.remove(at: index)
+        variants.append(shorter)
+      }
+    }
+    let alphabet = letters.sorted()
+    for index in max(start, 1)...characters.count {
+      for letter in alphabet {
+        var longer = characters
+        longer.insert(letter, at: index)
+        variants.append(longer)
+      }
+    }
+    var found: [String] = []
+    var seen = Set<String>()
+    for variant in variants {
+      if shouldStop() { return [] }
+      let text = String(variant)
+      if seen.insert(text).inserted, text != word, isKnown(text) { found.append(text) }
+    }
+    return found
+  }
+
+  static func neighborSlipCandidates(for word: String, maxSlips: Int, budget: Int = 1_500,
+                                     shouldStop: () -> Bool = { false },
                                      isKnown: (String) -> Bool) -> [String] {
     let characters = Array(word)
     let limit = min(maxSlips, maxNeighborSlips(forLength: characters.count))
@@ -202,6 +291,7 @@ enum KeyboardCorrectionRules {
       }
     }
     var used = 0
+    var result: [String] = []
     for slips in 1...limit {
       var positions = Array(0..<slips)
       var variants = 0
@@ -211,7 +301,7 @@ enum KeyboardCorrectionRules {
         variants += positions.reduce(1) { $0 * options[$1].count }
         combinationsPossible = nextCombination(&positions, upTo: characters.count)
       }
-      guard used + variants <= budget else { return [] }
+      guard used + variants <= budget else { break }
       used += variants
       var found: [String] = []
       positions = Array(0..<slips)
@@ -220,6 +310,7 @@ enum KeyboardCorrectionRules {
         var picks = Array(repeating: 0, count: slips)
         var morePicks = positions.allSatisfy { !options[$0].isEmpty }
         while morePicks {
+          if shouldStop() { return result }
           var variant = characters
           for (slot, position) in positions.enumerated() { variant[position] = options[position][picks[slot]] }
           let text = String(variant)
@@ -234,9 +325,9 @@ enum KeyboardCorrectionRules {
         }
         combinationsPossible = nextCombination(&positions, upTo: characters.count)
       }
-      if !found.isEmpty { return found }
+      result += found
     }
-    return []
+    return result
   }
 
   /// Advances `positions` to the next ascending combination below `count`; false at the end.
@@ -311,7 +402,8 @@ struct KeyboardAutocorrection {
     guard expected != nil, KeyboardCorrectionRules.isWord(word, letters: letters),
           (context.after ?? "").isEmpty || context.after?.first?.isWhitespace == true,
           let replacement = KeyboardCorrectionRules.replacement(
-            for: word, suggestions: provider.suggestions(for: word), letters: letters) else { return nil }
+            for: word, suggestions: provider.suggestions(for: word), letters: letters,
+            rank: { provider.frequencyRank(of: $0) }) else { return nil }
     return Edit(original: word, replacement: replacement, context: context)
   }
 

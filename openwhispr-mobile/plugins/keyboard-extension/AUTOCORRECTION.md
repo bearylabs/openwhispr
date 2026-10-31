@@ -49,33 +49,44 @@ still needs host/dictionary investigation; changing the default alone does not p
   and English an English word in German text (or the reverse) is never replaced. The flip
   side: a German typo that happens to be an English word stays as typed; deselecting English
   avoids that. Each proposal must pass the dictionary that offered it, and all languages'
-  proposals are judged together by the rules below, so a German and an English candidate for
-  the same typo count as ambiguous. With German alone, behaviour is the original German
-  prototype's; English goes through the same rules (`teh` → `the`, `recieve` → `receive`,
+  proposals compete under the rules below (`teh` → `the`, `recieve` → `receive`,
   `becuse` → `because`).
 - Only the selected languages' letters count (German: a–z and äöüß, English: a–z), limited
   further to languages whose dictionary is installed. With English alone, a word with an
   umlaut is left as typed.
-  Ranking first is not enough: `KeyboardCorrectionRules` scores each nearby candidate,
-  preserving lowercase/title case and using 3–20 of those letters, and replaces only when
-  exactly one candidate has the fewest edits. One edit: a swap of two adjacent letters,
-  including word edges (`udn` → `und`, `nicth` → `nicht`), or, for words with at least four
-  letters on both sides, one wrong, missing or extra letter (`nucht` → `nicht`,
-  `nich` → `nicht`, `Halllo` → `Hallo`).
-- **Neighbouring-key slips** (accepted for more corrections at a higher risk of wrong ones):
-  several wrong letters count when every one is a key touching the right one on the keyboard's
-  QWERTY rows (`KeyboardCorrectionRules.keyNeighbors`: either side in a row, the two
-  overlapping keys of the next top row, the key straight below/above for the bottom row). Up
-  to two in four-letter words, three from five letters (`fubktiojiert` → `funktioniert`,
-  `njxbt` → `nicht`); each slip costs one edit, so a one-edit candidate still wins. Three-letter
-  words get no substitutions at all, so `teh` stays `the` rather than `ten`.
-- UITextChecker rarely proposes such distant words, so when no one-edit proposal exists the
-  provider also builds the neighbouring-key variants itself (`neighborSlipCandidates`, fewest
-  slips first, stopping at the first level with a known word) and keeps those a selected
-  dictionary knows. A level of more than 2,500 variants is skipped whole (words over six
-  letters get at most two slips searched), and the whole search is dropped after 80 ms, so a
-  space press never waits longer; an abandoned search corrects nothing.
-  These broader rules may produce more false positives; immediately backspace to undo.
+- **Choosing a replacement** (`KeyboardCorrectionRules.replacement`): every candidate gets a
+  score, its weighted edit distance to the typed word plus 0.3 per doubling of its frequency
+  rank, and the lowest score wins. There is no "ambiguous, do nothing" any more: the user
+  accepted more wrong corrections for more corrections; backspace right after undoes one.
+  - Edit weights (`editCost`, an optimal-string-alignment distance): a wrong letter on the key
+    beside the right one in its row 1, on a touching key in the row above or below 1.5
+    (`keyNeighbors`, the keyboard's own QWERTY rows), a letter for its umlaut (a↔ä, o↔ö, u↔ü,
+    s↔ß) 1, any other wrong letter 2, a swap of adjacent letters 1, a missing or extra letter
+    1.5. Case must match (lowercase or title case), 3–20 of the selected languages' letters.
+  - Most weight allowed (`maxEditCost`): 1.5 for three letters, 2.5 for four, 4 for five or
+    six, 5 from seven letters: roughly one, two, three and four mistakes.
+  - Frequency (`frequencyRank`): the candidate's position among UITextChecker's completions
+    of its first two letters, which Apple orders by likelihood; cached per dictionary and
+    prefix (at most 48 lists). Unknown counts as rank 20,000.
+  - Examples: `nciht` → `nicht`, `teh` → `the`, `kalppt` → `klappt`, `fubktiojiert` →
+    `funktioniert`, `njxbt` → `nicht`, `wirklixh` → `wirklich`. `hsbd` becomes `habe`, not
+    `hand`: both are two slips away (`habe` with one diagonal), and `habe` is about three times
+    as common.
+- **Own candidates.** UITextChecker doesn't always propose swaps or missing/extra letters and
+  rarely words several slips away, so the provider also builds variants itself and keeps
+  those a selected dictionary knows: first every single swap, missing and extra letter
+  (`singleEditCandidates`), then words with one, two and three neighbouring-key slips
+  (`neighborSlipCandidates`, at most one slip in three-letter words, two in four-letter words).
+  All levels are searched, since a common word with more slips can beat a rare one with
+  fewer; a level that would pass 1,500 variants is skipped with the levels after it. The
+  space press waits for this, so the search stops after 100 ms and drops the level it was in.
+- **Tuning.** Weights and the frequency factor were chosen on the 50,000 most common German
+  and English words (FrequencyWords lists, used only offline, not shipped) with random typos,
+  on the production Swift code with a stand-in dictionary. Without Apple's own proposals
+  (worst case): one mistake (mixed slips, swaps, missing and extra letters) 90% right, 9%
+  wrong; two slips 75% right, 23% wrong; three slips 42% right, 21% wrong, the rest unchanged;
+  two mixed mistakes in one word about a third each right, wrong and unchanged.
+  Wrong corrections are more likely now; immediately backspace to undo.
   Actual candidates depend on the OS dictionary; the prototype may deliberately do nothing.
 - Digits, punctuation, underscores, mixed/all caps, URL/email-like tokens, emoji and
   decomposed combining sequences are excluded. Words following punctuation are not
@@ -207,8 +218,8 @@ A native rebuild is required; a JS-only update is insufficient.
 3. Languages: deselect English → `teh` + space stays `teh `, `nciht` still → `nicht`.
    Select only English → `nciht` may become an English word or stay, `Mädcehn` stays as typed,
    `teh` → `the`. The last selected language can't be deselected.
-4. Neighbouring keys: `fubktiojiert` → `funktioniert`, `njxbt` → `nicht`, `hsbd` → `hand`;
-   backspace restores each. Long words with three slips, umlauts mistyped, names and slang
+4. More mistakes: `fubktiojiert` → `funktioniert`, `njxbt` → `nicht`, `kalppt` → `klappt`,
+   `wirklixh` → `wirklich`, `hsbd` → `habe`; backspace restores each. Long words with three slips, umlauts mistyped, names and slang
    may stay or become a wrong word; backspace right after undoes it.
 5. Test on at least Notes, Messages and a Safari textarea/contenteditable, with fast typing
    and delayed host updates. No correction is preferable to any wrong-location replacement.

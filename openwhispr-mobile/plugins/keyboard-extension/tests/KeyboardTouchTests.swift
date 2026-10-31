@@ -556,7 +556,7 @@ private enum KeyboardTouchTests {
     controller.touchTestSetProvider(CorrectionStub(words: ["nicht", "noch"]))
     controller.touchTestTypeWord("nich")
     controller.touchTestTapSpace()
-    checks.check("ambiguous nearby words unchanged", TestEnvironment.proxy.documentContextBeforeInput == "nich ")
+    checks.check("the closest of two proposals wins", TestEnvironment.proxy.documentContextBeforeInput == "noch ")
 
     controller = keyboard()
     controller.touchTestTypeWord("nciht")
