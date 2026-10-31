@@ -15,6 +15,8 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   /// Only languages with an installed dictionary; their letters bound what can be corrected.
   let letters: Set<Character>
   private let dictionaries: [String]
+  /// The German dictionary, when German is selected and installed (for ae/oe/ue/ss).
+  private let germanDictionary: String?
   private let checker = UITextChecker()
   private var completionCache: [String: [String]] = [:]
   /// How long a space press may spend looking up neighbouring-key variants.
@@ -28,6 +30,7 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
       Self.dictionary(for: language, from: available).map { (language, $0) }
     }
     dictionaries = resolved.map { $0.1 }
+    germanDictionary = resolved.first { $0.0.code == KeyboardCorrectionLanguage.german.code }?.1
     letters = KeyboardCorrectionLanguage.letters(of: resolved.map { $0.0 })
   }
 
@@ -73,6 +76,28 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     return best
   }
 
+  /// Respellings of a word a dictionary accepts as typed, that German knows, when the typed
+  /// spelling isn't a common word in any selected dictionary (no frequency rank): `moechte` or a
+  /// learned `fuer` become `möchte` and `für`, while `sued`, `phoenix`, `Masse` and `Busse`
+  /// stay. A respelling with ß also needs German not to know the ss spelling, or the ß one to
+  /// be common.
+  private func knownWordRespellings(of word: String) -> [String] {
+    guard let germanDictionary, frequencyRank(of: word) == nil else { return [] }
+    let germanKnowsWord = isKnown(word, in: germanDictionary)
+    return KeyboardCorrectionRules.transcriptions(of: word).compactMap { respelling in
+      guard let spelling = germanSpelling(of: respelling.word, in: germanDictionary) else { return nil }
+      guard spelling.contains("ß") else { return spelling }
+      return !germanKnowsWord || frequencyRank(of: spelling) != nil ? spelling : nil
+    }
+  }
+
+  /// The respelling as German knows it: as typed, or capitalised for a noun typed in lowercase.
+  private func germanSpelling(of respelling: String, in dictionary: String) -> String? {
+    if isKnown(respelling, in: dictionary) { return respelling }
+    let noun = KeyboardCorrectionRules.capitalized(respelling)
+    return noun != respelling && isKnown(noun, in: dictionary) ? noun : nil
+  }
+
   func suggestions(for word: String) -> [String] {
     guard !dictionaries.isEmpty else {
       log.info("Autocorrection skipped: no dictionary for the selected languages")
@@ -82,8 +107,12 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     let range = NSRange(word.startIndex..<word.endIndex, in: word)
     // The complete word must be flagged by every dictionary, not just part of it by one.
     guard dictionaries.allSatisfy({ misspelledRange(of: word, in: $0) == range }) else {
-      log.info("Autocorrection skipped: whole word not flagged as misspelled in every dictionary")
-      return []
+      // Except German typed without umlauts that a dictionary (English, or one with Swiss or
+      // learned spellings) accepts as it is: `moechte`, `strasse`.
+      let respelled = knownWordRespellings(of: word)
+      // Flags only: which dictionaries accept the word, never the word itself.
+      log.info("Autocorrection skipped: whole word not flagged as misspelled in every dictionary (germanKnows=\(self.germanDictionary.map { self.isKnown(word, in: $0) } ?? false, privacy: .public) respellings=\(respelled.count, privacy: .public))")
+      return respelled
     }
     var suggestions: [String] = []
     for dictionary in dictionaries {
@@ -106,8 +135,9 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     let known: (String) -> Bool = { variant in self.dictionaries.contains { self.isKnown(variant, in: $0) } }
     // German spelled with ae/oe/ue/ss (`schoen`, `Strasse`); only when ä/ö/ü/ß can be typed
     // in the selected languages, and before anything slower.
-    let respellings = letters.contains("ä")
-      ? KeyboardCorrectionRules.transcriptions(of: word).map { $0.word }.filter(known) : []
+    let respellings = germanDictionary.map { german in
+      KeyboardCorrectionRules.transcriptions(of: word).compactMap { germanSpelling(of: $0.word, in: german) }
+    } ?? []
     let edits = KeyboardCorrectionRules.singleEditCandidates(
       for: word, letters: letters, shouldStop: stop, isKnown: known)
     let slips = timedOut ? [] : KeyboardCorrectionRules.neighborSlipCandidates(

@@ -225,6 +225,14 @@ private enum KeyboardAutocorrectionTests {
       for: "gruesse", suggestions: ["grüße"]) == "grüße")
     check("frequency picks between respellings", KeyboardCorrectionRules.replacement(
       for: "gruesse", suggestions: ["grüsse", "grüße"], rank: { $0 == "grüße" ? 0 : 900 }) == "grüße")
+    check("the most replaced pairs win, even against frequency", KeyboardCorrectionRules.replacement(
+      for: "gruesse", suggestions: ["grüsse", "grüße"], rank: { $0 == "grüsse" ? 0 : 900 }) == "grüße")
+    check("pair counts", KeyboardCorrectionRules.transcriptions(of: "Gruesse")
+      .first { $0.word == "Grüße" }?.pairs == 2)
+    check("a lowercase respelling may be capitalised", KeyboardCorrectionRules.replacement(
+      for: "strasse", suggestions: ["Straße"]) == "Straße")
+    check("other proposals still keep their case", KeyboardCorrectionRules.replacement(
+      for: "nciht", suggestions: ["Nicht"]) == nil)
     check("english-only never respells", KeyboardCorrectionRules.replacement(
       for: "schoen", suggestions: ["schön"],
       letters: KeyboardCorrectionLanguage.letters(of: [.english])) == nil)

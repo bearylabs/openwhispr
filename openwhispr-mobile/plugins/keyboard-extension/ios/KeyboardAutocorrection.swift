@@ -222,8 +222,13 @@ enum KeyboardCorrectionRules {
   /// More pairs than this in one word are left alone (2^6 spellings at most).
   static let maxTranscriptionPairs = 6
 
-  /// Every respelling of `word` with at least one pair replaced, and its cost.
-  static func transcriptions(of word: String) -> [(word: String, cost: Double)] {
+  static func capitalized(_ word: String) -> String {
+    word.prefix(1).uppercased() + word.dropFirst()
+  }
+
+  /// Every respelling of `word` with at least one pair replaced, its cost and how many pairs
+  /// it replaced.
+  static func transcriptions(of word: String) -> [(word: String, cost: Double, pairs: Int)] {
     let characters = Array(word)
     var sites: [(index: Int, letter: Character, cost: Double)] = []
     var index = 0
@@ -242,19 +247,21 @@ enum KeyboardCorrectionRules {
       }
     }
     guard !sites.isEmpty, sites.count <= maxTranscriptionPairs else { return [] }
-    var result: [(word: String, cost: Double)] = []
+    var result: [(word: String, cost: Double, pairs: Int)] = []
     for mask in 1..<(1 << sites.count) {
       var output: [Character] = []
       var cost = 0.0
+      var pairs = 0
       var position = 0
       for (bit, site) in sites.enumerated() where mask & (1 << bit) != 0 {
         output += characters[position..<site.index]
         output.append(site.letter)
         cost += site.cost
+        pairs += 1
         position = site.index + 2
       }
       output += characters[position...]
-      result.append((String(output), cost))
+      result.append((String(output), cost, pairs))
     }
     return result
   }
@@ -262,26 +269,31 @@ enum KeyboardCorrectionRules {
   /// The eligible candidate with the lowest score (edit cost plus frequency); a tie goes to the
   /// earliest in `suggestions`. A candidate that is the word's own spelling with ä/ö/ü/ß
   /// (`schoen` → `schön`, `Strasse` → `Straße`) wins over every other: typing an unknown word
-  /// whose umlaut spelling is a word almost always means that word. More corrections, at the
+  /// whose umlaut spelling is a word almost always means that word. Among those, the one
+  /// replacing the most pairs wins (`gruesse` → `grüße`, not the Swiss `grüsse`). More corrections, at the
   /// risk of picking the wrong word of two; backspace right after undoes it.
   static func replacement(for word: String, suggestions: [String],
                           letters: Set<Character> = KeyboardCorrectionRules.defaultLetters,
                           rank: (String) -> Int? = { _ in nil }) -> String? {
     guard isWord(word, letters: letters) else { return nil }
-    let respellings = Dictionary(transcriptions(of: word).map { ($0.word, $0.cost) },
-                                 uniquingKeysWith: { min($0, $1) })
-    var best: (word: String, score: Double, respelled: Bool)?
+    // A lowercase respelling may also come capitalised: German nouns (`strasse` → `Straße`).
+    let respellings = Dictionary(transcriptions(of: word).flatMap { respelling in
+      [(respelling.word, (respelling.cost, respelling.pairs)),
+       (capitalized(respelling.word), (respelling.cost, respelling.pairs))]
+    }, uniquingKeysWith: { $0.0 <= $1.0 ? $0 : $1 })
+    var best: (word: String, score: Double, pairs: Int)?
     var seen = Set<String>()
     for candidate in suggestions where seen.insert(candidate).inserted {
-      guard isWord(candidate, letters: letters),
-            (word == word.lowercased()) == (candidate == candidate.lowercased()) else { continue }
       let respelled = respellings[candidate]
-      guard let cost = respelled ?? editCost(from: word, to: candidate) else { continue }
+      guard isWord(candidate, letters: letters),
+            respelled != nil || (word == word.lowercased()) == (candidate == candidate.lowercased())
+      else { continue }
+      guard let cost = respelled?.0 ?? editCost(from: word, to: candidate) else { continue }
       let candidateScore = score(cost: cost, rank: rank(candidate))
-      let isRespelled = respelled != nil
-      if best == nil || (isRespelled && !best!.respelled)
-          || (isRespelled == best!.respelled && candidateScore < best!.score - 1e-9) {
-        best = (candidate, candidateScore, isRespelled)
+      let pairs = respelled?.1 ?? 0
+      if best == nil || pairs > best!.pairs
+          || (pairs == best!.pairs && candidateScore < best!.score - 1e-9) {
+        best = (candidate, candidateScore, pairs)
       }
     }
     return best?.word

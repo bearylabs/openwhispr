@@ -73,12 +73,17 @@ still needs host/dictionary investigation; changing the default alone does not p
     `hand`: both are two slips away (`habe` with one diagonal), and `habe` is about three times
     as common.
 - **ae/oe/ue/ss** (German selected only): an unknown word whose spelling with ä/ö/ü (Ä/Ö/Ü
-  at the start of a capitalised word) or ß is a known word becomes that word, ahead of every
-  other candidate (`schoen` → `schön`, `Aerger` → `Ärger`, `Strasse` → `Straße`, `gruesse` →
-  `grüße`, `groesser` → `größer`). Each pair is a choice (`transcriptions`, at most six pairs);
-  between several respellings, ß counts 0.5 and an umlaut 0.3, plus frequency. A known word is
-  never touched, so `neue`, `Feuer`, `Michael`, `dass`, `muss` and `Masse` stay. If a dictionary
-  on the device (or a word iOS has learned) accepts the ae spelling itself, it stays too.
+  at the start of a capitalised word) or ß is a German word becomes that word, ahead of every
+  other candidate (`schoen` → `schön`, `Aerger` → `Ärger`, `gruesse` → `grüße`, `groesser` →
+  `größer`). A lowercase noun is capitalised (`strasse` → `Straße`). Each pair is a choice
+  (`transcriptions`, at most six pairs); the respelling replacing the most pairs wins
+  (`grüße` over the Swiss `grüsse`), then ß 0.5 and an umlaut 0.3 plus frequency.
+- A word some dictionary accepts as typed (English, Swiss spellings, words iOS has learned)
+  is respelled only when it isn't a common word in any selected dictionary (no frequency
+  rank) and the respelling is German (`moechte` → `möchte`); a ß respelling then also needs
+  German not to know the ss spelling or the ß spelling to be common. So `neue`, `Feuer`,
+  `Michael`, `dass`, `muss`, `Masse`, `Busse`, `sued` and `phoenix` stay. The skip log line
+  reports `germanKnows` and the number of respellings, never the word.
 - **Own candidates.** UITextChecker doesn't always propose swaps or missing/extra letters and
   rarely words several slips away, so the provider also builds variants itself and keeps
   those a selected dictionary knows: first every single swap, missing and extra letter
