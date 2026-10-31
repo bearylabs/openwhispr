@@ -104,13 +104,17 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
       return timedOut
     }
     let known: (String) -> Bool = { variant in self.dictionaries.contains { self.isKnown(variant, in: $0) } }
+    // German spelled with ae/oe/ue/ss (`schoen`, `Strasse`); only when ä/ö/ü/ß can be typed
+    // in the selected languages, and before anything slower.
+    let respellings = letters.contains("ä")
+      ? KeyboardCorrectionRules.transcriptions(of: word).map { $0.word }.filter(known) : []
     let edits = KeyboardCorrectionRules.singleEditCandidates(
       for: word, letters: letters, shouldStop: stop, isKnown: known)
     let slips = timedOut ? [] : KeyboardCorrectionRules.neighborSlipCandidates(
       for: word, maxSlips: KeyboardCorrectionRules.maxNeighborSlips(forLength: word.count),
       shouldStop: stop, isKnown: known)
     var generated = 0
-    for candidate in edits + slips where !suggestions.contains(candidate) {
+    for candidate in respellings + edits + slips where !suggestions.contains(candidate) {
       suggestions.append(candidate)
       generated += 1
     }

@@ -203,6 +203,32 @@ private enum KeyboardAutocorrectionTests {
     check("single edit: stop gives nothing", KeyboardCorrectionRules.singleEditCandidates(
       for: "kalppt", letters: latinLetters, shouldStop: { true }, isKnown: editKnown).isEmpty)
 
+    // German spelled with ae/oe/ue/ss.
+    func spellings(_ word: String) -> Set<String> { Set(KeyboardCorrectionRules.transcriptions(of: word).map { $0.word }) }
+    check("umlaut respellings", spellings("schoen") == ["schön"])
+    check("every combination", spellings("Gruesse") == ["Grüsse", "Grueße", "Grüße"])
+    check("capital umlaut at the start", spellings("Aerger") == ["Ärger"])
+    check("no capital ß", spellings("Ssomething").allSatisfy { !$0.hasPrefix("ß") && !$0.hasPrefix("SS") })
+    check("no pair, no respelling", spellings("nicht").isEmpty)
+    check("pairs do not overlap", spellings("sss") == ["ßs"])
+    check("respelling costs", KeyboardCorrectionRules.transcriptions(of: "Gruesse")
+      .first { $0.word == "Grüße" }?.cost == 0.8)
+    check("too many pairs left alone", KeyboardCorrectionRules.transcriptions(
+      of: "aeaeaeaeaeaeae").isEmpty)
+    check("respelling beats a common nearby word", KeyboardCorrectionRules.replacement(
+      for: "schoen", suggestions: ["schon", "schön"], rank: { $0 == "schon" ? 0 : 500 }) == "schön")
+    check("capital respelling", KeyboardCorrectionRules.replacement(
+      for: "Aerger", suggestions: ["Ärger"]) == "Ärger")
+    check("ß respelling", KeyboardCorrectionRules.replacement(
+      for: "Strasse", suggestions: ["Strasser", "Straße"]) == "Straße")
+    check("umlaut and ß together", KeyboardCorrectionRules.replacement(
+      for: "gruesse", suggestions: ["grüße"]) == "grüße")
+    check("frequency picks between respellings", KeyboardCorrectionRules.replacement(
+      for: "gruesse", suggestions: ["grüsse", "grüße"], rank: { $0 == "grüße" ? 0 : 900 }) == "grüße")
+    check("english-only never respells", KeyboardCorrectionRules.replacement(
+      for: "schoen", suggestions: ["schön"],
+      letters: KeyboardCorrectionLanguage.letters(of: [.english])) == nil)
+
     // The app's language selection ("de,en" in the App Group).
     let german = KeyboardCorrectionLanguage.german, english = KeyboardCorrectionLanguage.english
     check("missing selection is German and English",

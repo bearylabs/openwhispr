@@ -72,6 +72,13 @@ still needs host/dictionary investigation; changing the default alone does not p
     `funktioniert`, `njxbt` → `nicht`, `wirklixh` → `wirklich`. `hsbd` becomes `habe`, not
     `hand`: both are two slips away (`habe` with one diagonal), and `habe` is about three times
     as common.
+- **ae/oe/ue/ss** (German selected only): an unknown word whose spelling with ä/ö/ü (Ä/Ö/Ü
+  at the start of a capitalised word) or ß is a known word becomes that word, ahead of every
+  other candidate (`schoen` → `schön`, `Aerger` → `Ärger`, `Strasse` → `Straße`, `gruesse` →
+  `grüße`, `groesser` → `größer`). Each pair is a choice (`transcriptions`, at most six pairs);
+  between several respellings, ß counts 0.5 and an umlaut 0.3, plus frequency. A known word is
+  never touched, so `neue`, `Feuer`, `Michael`, `dass`, `muss` and `Masse` stay. If a dictionary
+  on the device (or a word iOS has learned) accepts the ae spelling itself, it stays too.
 - **Own candidates.** UITextChecker doesn't always propose swaps or missing/extra letters and
   rarely words several slips away, so the provider also builds variants itself and keeps
   those a selected dictionary knows: first every single swap, missing and extra letter
@@ -219,7 +226,9 @@ A native rebuild is required; a JS-only update is insufficient.
    Select only English → `nciht` may become an English word or stay, `Mädcehn` stays as typed,
    `teh` → `the`. The last selected language can't be deselected.
 4. More mistakes: `fubktiojiert` → `funktioniert`, `njxbt` → `nicht`, `kalppt` → `klappt`,
-   `wirklixh` → `wirklich`, `hsbd` → `habe`; backspace restores each. Long words with three slips, umlauts mistyped, names and slang
+   `wirklixh` → `wirklich`, `hsbd` → `habe`; backspace restores each. Umlauts: `schoen`,
+   `fuer`, `moechte`, `Aerger`, `Strasse`, `gruesse` → `schön`, `für`, `möchte`, `Ärger`,
+   `Straße`, `grüße`; `neue`, `dass`, `muss` stay. Long words with three slips, umlauts mistyped, names and slang
    may stay or become a wrong word; backspace right after undoes it.
 5. Test on at least Notes, Messages and a Safari textarea/contenteditable, with fast typing
    and delayed host updates. No correction is preferable to any wrong-location replacement.
