@@ -1071,6 +1071,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   private func refreshMinimalKeyboardPreference() {
     minimalKeyboardEnabled = KeyboardHandoffProvider.shared.isMinimalKeyboardEnabled()
+    // Without self-sizing the host keeps a taller keyboard frame around the compact
+    // height constraint. Only the minimal keyboard opts in; the full keyboard keeps
+    // the system's default sizing.
+    inputView?.allowsSelfSizing = minimalKeyboardEnabled
     keyboardRowsStack.isHidden = minimalKeyboardEnabled
     minimalGlobeButton.isHidden = !minimalGlobeVisible
     if !minimalKeyboardEnabled { closeCompactToneMenu() }
