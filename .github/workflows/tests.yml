@@ -39,6 +39,7 @@ jobs:
 
   infrastructure:
     name: Test infrastructure isolation
+    needs: resolve
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -46,7 +47,15 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # The adapter must fit the app commit under test, not this branch's old snapshot.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: app-source
+          persist-credentials: false
       - run: python3 -m unittest discover -s tests/tests -v
+        env:
+          KEYBOARD_APP_SOURCE: app-source
       - name: App main must contain no fork-only infrastructure
         run: |
           git fetch --no-tags origin main

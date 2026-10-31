@@ -223,9 +223,14 @@ only with a clean worktree, edit the test infrastructure and push `tests`.
 Infrastructure checks run with:
 
 ```sh
-python3 -m unittest discover -s tests/tests -v
-python3 tests/run-keyboard-tests.py . --check-only
+# The adapter is checked against an app checkout, as CI does with the dispatched SHA.
+git -C /home/hrudek/dev/openwhispr worktree add --detach "$PWD/app-source" APP_BRANCH_OR_SHA
+KEYBOARD_APP_SOURCE=app-source python3 -m unittest discover -s tests/tests -v
+git -C /home/hrudek/dev/openwhispr worktree remove app-source
 ```
+
+Without `KEYBOARD_APP_SOURCE` the adapter check uses this branch's own, outdated
+app snapshot and is expected to fail once the keyboard source moves on.
 
 Before restructuring, old main and tests were additionally saved in
 `.git/before-upstream-sync-20261030.bundle`. The remote backup branch preserves

@@ -1,4 +1,5 @@
 import hashlib
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,6 +10,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = Path('openwhispr-mobile/plugins/keyboard-extension')
 RUNNER = ROOT / 'tests/run-keyboard-tests.py'
+# The app checkout the adapter is validated against; CI passes the commit under test.
+APP_ROOT = (ROOT / os.environ.get('KEYBOARD_APP_SOURCE', '.')).resolve()
 
 
 def fingerprint(root):
@@ -18,14 +21,14 @@ def fingerprint(root):
 
 class AdapterTests(unittest.TestCase):
     def test_adapter_patches_only_a_temporary_copy(self):
-        before = fingerprint(ROOT / PLUGIN)
-        subprocess.run([sys.executable, str(RUNNER), str(ROOT), '--check-only'], check=True)
-        self.assertEqual(before, fingerprint(ROOT / PLUGIN))
+        before = fingerprint(APP_ROOT / PLUGIN)
+        subprocess.run([sys.executable, str(RUNNER), str(APP_ROOT), '--check-only'], check=True)
+        self.assertEqual(before, fingerprint(APP_ROOT / PLUGIN))
 
     def test_changed_harness_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)
-            shutil.copytree(ROOT / PLUGIN, source / PLUGIN)
+            shutil.copytree(APP_ROOT / PLUGIN, source / PLUGIN)
             tests = source / PLUGIN / 'tests/KeyboardTouchTests.swift'
             tests.write_text(tests.read_text().replace('static var fullAccess = false',
                                                        'static var fullAccess = unexpected'))
