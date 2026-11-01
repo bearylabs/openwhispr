@@ -33,7 +33,8 @@ The app branch's `CLAUDE.md` is binding as well.
 5. Upstream PR (draft) from `<type>/<topic>`: what, why, link to the test run. Later landings update it.
 
 Build the iOS app ("build the app"): repo `bearylabs/ios-builds`, local `/home/hrudek/dev/ios-builds`.
-Read its `README.md` first and build only a SHA with green tests, never from `dev-rules`.
+Read its `README.md` first. Any pushed app SHA may be built, tested or not (usually the `exp/`
+branch); never `dev-rules`. Tests are required only for landing and upstream PRs.
 
 Rebase a feature branch only when asked: disable ruleset 26306024
 (`gh api -X PUT repos/bearylabs/openwhispr/rulesets/26306024 -f enforcement=disabled`),
