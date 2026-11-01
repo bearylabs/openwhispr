@@ -497,7 +497,9 @@ private enum KeyboardTouchTests {
 
   private struct CorrectionStub: KeyboardCorrectionProvider {
     var words = ["nicht"]
+    var rank: Int?
     func suggestions(for word: String) -> [String] { words }
+    func frequencyRank(of candidate: String) -> Int? { rank }
   }
 
   @MainActor
@@ -678,6 +680,22 @@ private enum KeyboardTouchTests {
     checks.check("neighbouring-key slips corrected", TestEnvironment.proxy.documentContextBeforeInput == "funktioniert ")
     controller.touchTestTapDelete()
     checks.check("neighbouring-key slips undo", TestEnvironment.proxy.documentContextBeforeInput == "fubktiojiert")
+
+    controller = keyboard()
+    controller.touchTestSetProvider(CorrectionStub(words: ["Möglichkeit", "Möglichkeiten"]))
+    controller.touchTestTypeWord("moeglichkwitne")
+    controller.touchTestTapSpace()
+    checks.check("long word with umlaut and typos corrected", TestEnvironment.proxy.documentContextBeforeInput == "Möglichkeiten ")
+    controller.touchTestTapDelete()
+    checks.check("long word undo", TestEnvironment.proxy.documentContextBeforeInput == "moeglichkwitne")
+
+    controller = keyboard()
+    controller.touchTestSetProvider(CorrectionStub(words: ["ich habe"], rank: 5))
+    controller.touchTestTypeWord("ichhabe")
+    controller.touchTestTapSpace()
+    checks.check("missing space inserted", TestEnvironment.proxy.documentContextBeforeInput == "ich habe ")
+    controller.touchTestTapDelete()
+    checks.check("missing space undo", TestEnvironment.proxy.documentContextBeforeInput == "ichhabe")
 
     controller = keyboard()
     controller.touchTestSetProvider(CorrectionStub(words: ["schon", "schön"]))

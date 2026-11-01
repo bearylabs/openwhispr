@@ -178,13 +178,18 @@ enum KeyboardCorrectionRules {
   }
 
   /// Weighted edit distance (optimal string alignment: substitutions by key distance,
-  /// insertions, deletions and swaps of adjacent letters), or nil when the words are equal or
-  /// further apart than `maxEditCost` allows for the typed word.
+  /// insertions, deletions, swaps of adjacent letters, and ae/oe/ue/ss typed for ä/ö/ü/ß), or
+  /// nil when the words are equal or further apart than `maxEditCost` allows for the typed word.
+  /// The respelling step lets German typed without umlauts carry typos as well
+  /// (`moeglichkwitne` → `Möglichkeiten`: ö, a slip and a swap).
   static func editCost(from word: String, to candidate: String) -> Double? {
     let source = Array(word), target = Array(candidate)
     let limit = maxEditCost(forLength: source.count)
+    // Each letter the candidate is shorter by costs at least a respelling, each it is longer by
+    // an insertion.
+    let lengthCost = source.count > target.count ? umlautTranscriptionCost : insertDeleteCost
     guard source != target,
-          Double(abs(source.count - target.count)) * insertDeleteCost <= limit + 1e-9 else { return nil }
+          Double(abs(source.count - target.count)) * lengthCost <= limit + 1e-9 else { return nil }
     var table = Array(repeating: Array(repeating: 0.0, count: target.count + 1), count: source.count + 1)
     for i in 0...source.count { table[i][0] = Double(i) * insertDeleteCost }
     for j in 0...target.count { table[0][j] = Double(j) * insertDeleteCost }
@@ -194,6 +199,9 @@ enum KeyboardCorrectionRules {
                        table[i - 1][j - 1] + substitutionCost(source[i - 1], target[j - 1]))
         if i > 1, j > 1, source[i - 1] == target[j - 2], source[i - 2] == target[j - 1] {
           best = min(best, table[i - 2][j - 2] + 1)
+        }
+        if i > 1, let respelling = transcriptionCost(source[i - 2], source[i - 1], for: target[j - 1]) {
+          best = min(best, table[i - 2][j - 1] + respelling)
         }
         table[i][j] = best
       }
@@ -224,6 +232,65 @@ enum KeyboardCorrectionRules {
   ]
   /// More pairs than this in one word are left alone (2^6 spellings at most).
   static let maxTranscriptionPairs = 6
+
+  /// The cost of typing `first` and `second` for `letter` (`o`, `e` for `ö`; `s`, `s` for
+  /// `ß`), case-insensitively, or nil when they don't spell it.
+  private static func transcriptionCost(_ first: Character, _ second: Character,
+                                        for letter: Character) -> Double? {
+    let pair = (String(first) + String(second)).lowercased()
+    let lower = Character(letter.lowercased())
+    return transcriptionPairs.first { $0.pair == pair && $0.letter == lower }?.cost
+  }
+
+  /// A word typed without the space between two words (`ichhabe` → `ich habe`) costs like a
+  /// wrong key beside the right one.
+  static let splitCost = 1.0
+
+  /// The two words of a candidate with one space (`ich habe`), each of two letters or more and
+  /// only the selected languages' letters; nil for anything else.
+  static func splitParts(of candidate: String,
+                         letters: Set<Character> = KeyboardCorrectionRules.defaultLetters) -> (String, String)? {
+    let parts = candidate.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
+    guard parts.count == 2, parts.allSatisfy({ part in
+      let lower = part.lowercased()
+      return part.count >= 2 && lower.allSatisfy { letters.contains($0) }
+        && part.unicodeScalars.count == part.count
+        && (part == lower || part == capitalized(lower))
+    }) else { return nil }
+    return (parts[0], parts[1])
+  }
+
+  /// Every way to cut `word` into two words of two letters or more (`ichhabe` → `ich habe`,
+  /// `ic hhabe`, …), as candidates with a space; the provider keeps those both words of which
+  /// it knows.
+  static func splitCandidates(for word: String) -> [String] {
+    let characters = Array(word)
+    guard characters.count >= 4 else { return [] }
+    return (2...(characters.count - 2)).map {
+      String(characters[..<$0]) + " " + String(characters[$0...])
+    }
+  }
+
+  /// Long words whose end went wrong are found among the completions of their start
+  /// (`möglichk` → `Möglichkeiten`). The prefixes to try, longest first, for the word as typed
+  /// and, before it, its German respellings (most pairs replaced first; `maxCompletionForms`
+  /// forms in all): from one letter short down to half the word, five letters
+  /// at least. Nothing for words under `minCompletionLength` letters.
+  static let minCompletionLength = 7
+  static let maxCompletionForms = 4
+  static func completionPrefixes(of word: String, respell: Bool) -> [[String]] {
+    guard word.count >= minCompletionLength else { return [] }
+    let respellings = respell
+      ? transcriptions(of: word).sorted { $0.pairs > $1.pairs }.map { $0.word } : []
+    return (respellings.prefix(maxCompletionForms - 1) + [word]).map { form in
+      let characters = Array(form)
+      let shortest = max(5, (characters.count + 1) / 2)
+      guard characters.count - 1 >= shortest else { return [] }
+      return stride(from: characters.count - 1, through: shortest, by: -1).map {
+        String(characters[..<$0])
+      }
+    }
+  }
 
   /// The language of the words before the cursor: the code of the only language that knows
   /// some of the last eight words (two letters or more) that the others don't, or nil when
@@ -301,6 +368,20 @@ enum KeyboardCorrectionRules {
     var best: (word: String, score: Double, pairs: Int)?
     var seen = Set<String>()
     for candidate in suggestions where seen.insert(candidate).inserted {
+      if candidate.contains(" ") {
+        // Two words for one typed without its space: both must be known as common words (a
+        // rank), so a rare word is never cut into two. The rarer word's rank counts.
+        guard let (left, right) = splitParts(of: candidate, letters: letters),
+              word == word.lowercased() || left != left.lowercased(),
+              let leftRank = rank(left), let rightRank = rank(right),
+              let joinedCost = left + right == word
+                ? 0 : editCost(from: word, to: left + right) else { continue }
+        let candidateScore = score(cost: joinedCost + splitCost, rank: max(leftRank, rightRank))
+        if best == nil || (best!.pairs == 0 && candidateScore < best!.score - 1e-9) {
+          best = (candidate, candidateScore, 0)
+        }
+        continue
+      }
       let respelled = respellings[candidate]
       // A capitalised word keeps its capital; a lowercase one may gain one (a German noun:
       // the provider only offers capitalised proposals for lowercase words that are nouns).

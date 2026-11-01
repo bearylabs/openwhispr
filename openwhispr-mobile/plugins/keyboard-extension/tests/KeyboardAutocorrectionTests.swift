@@ -246,6 +246,60 @@ private enum KeyboardAutocorrectionTests {
     check("capitalising alone costs nothing", KeyboardCorrectionRules.editCost(from: "haus", to: "Haus") == 0)
     check("a capitalised word never loses its capital", KeyboardCorrectionRules.replacement(
       for: "Haus", suggestions: ["haus"]) == nil)
+    // Respellings inside the edit distance, so they combine with typos.
+    func near(_ a: Double?, _ b: Double) -> Bool { a.map { abs($0 - b) < 1e-9 } == true }
+    check("a respelling costs little in the edit distance",
+          near(KeyboardCorrectionRules.editCost(from: "schoen", to: "schön"), 0.3))
+    check("ss for ß in the edit distance",
+          near(KeyboardCorrectionRules.editCost(from: "grosse", to: "große"), 0.5))
+    check("a capital respelling in the edit distance",
+          near(KeyboardCorrectionRules.editCost(from: "Oefen", to: "Öfen"), 0.3))
+    check("respelling, slip and swap together", near(KeyboardCorrectionRules.editCost(
+      from: "moeglichkwitne", to: "Möglichkeiten"), 2.3))
+    check("a respelled long word with typos", KeyboardCorrectionRules.replacement(
+      for: "moeglichkwitne", suggestions: ["Möglichkeit", "Möglichkeiten"]) == "Möglichkeiten")
+    check("a respelling pair never stands for another letter",
+          KeyboardCorrectionRules.editCost(from: "oe", to: "ä") == nil)
+    check("a missing letter still costs an insertion",
+          near(KeyboardCorrectionRules.editCost(from: "nich", to: "nicht"), 1.5))
+    check("too short by too many letters", KeyboardCorrectionRules.editCost(
+      from: "abcdefghijkl", to: "abcd") == nil)
+
+    // Completions of a long word's start.
+    let prefixes = KeyboardCorrectionRules.completionPrefixes(of: "moeglichkwitne", respell: true)
+    check("respelled prefixes first", prefixes.first?.first == "möglichkwitn"
+      && prefixes.first?.contains("möglichk") == true)
+    check("the word as typed comes last", prefixes.last?.first == "moeglichkwitn")
+    check("prefixes stop at half the word", prefixes.last?.last == "moeglic")
+    check("no respelled prefixes without German", KeyboardCorrectionRules.completionPrefixes(
+      of: "moeglichkwitne", respell: false).count == 1)
+    check("short words get no completions",
+          KeyboardCorrectionRules.completionPrefixes(of: "nciht", respell: true).isEmpty)
+    check("at most four spellings", KeyboardCorrectionRules.completionPrefixes(
+      of: "aeoeueaeoeue", respell: true).count == KeyboardCorrectionRules.maxCompletionForms)
+    check("prefixes keep five letters", KeyboardCorrectionRules.completionPrefixes(
+      of: "abcdefg", respell: false) == [["abcdef", "abcde"]])
+
+    // Two words typed without their space.
+    check("every cut into words of two letters or more",
+          KeyboardCorrectionRules.splitCandidates(for: "ichhabe")
+            == ["ic hhabe", "ich habe", "ichh abe", "ichha be"])
+    check("too short to cut", KeyboardCorrectionRules.splitCandidates(for: "abc").isEmpty)
+    check("split parts", KeyboardCorrectionRules.splitParts(of: "ich habe")! == ("ich", "habe"))
+    check("one-letter words are never split off", KeyboardCorrectionRules.splitParts(of: "a cat") == nil)
+    check("one space only", KeyboardCorrectionRules.splitParts(of: "ich habe das") == nil)
+    check("a common split", KeyboardCorrectionRules.replacement(
+      for: "ichhabe", suggestions: ["ich habe"], rank: { _ in 10 }) == "ich habe")
+    check("a split needs both words common", KeyboardCorrectionRules.replacement(
+      for: "ichhabe", suggestions: ["ich habe"], rank: { $0 == "ich" ? 1 : nil }) == nil)
+    check("a split keeps a capital", KeyboardCorrectionRules.replacement(
+      for: "Ichhabe", suggestions: ["ich habe", "Ich habe"], rank: { _ in 10 }) == "Ich habe")
+    check("a split with a typo", KeyboardCorrectionRules.replacement(
+      for: "ichhsbe", suggestions: ["ich habe"], rank: { _ in 10 }) == "ich habe")
+    check("a close word beats a rare split", KeyboardCorrectionRules.replacement(
+      for: "nciht", suggestions: ["nc iht", "nicht"], rank: { $0 == "nicht" ? 3 : 5_000 }) == "nicht")
+    check("a respelling beats a split", KeyboardCorrectionRules.replacement(
+      for: "schoen", suggestions: ["sch oen", "schön"], rank: { _ in 1 }) == "schön")
     check("english-only never respells", KeyboardCorrectionRules.replacement(
       for: "schoen", suggestions: ["schön"],
       letters: KeyboardCorrectionLanguage.letters(of: [.english])) == nil)

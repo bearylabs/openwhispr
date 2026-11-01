@@ -68,7 +68,9 @@ typed word plus 0.3 per doubling of its frequency rank. The lowest score wins; t
 - Edit weights (`editCost`, optimal string alignment): a wrong letter on the key beside the
   right one in its row 1, on a touching key in the row above or below 1.5 (`keyNeighbors`, the
   keyboard's own QWERTY rows), a letter for its umlaut (a↔ä, o↔ö, u↔ü, s↔ß) 1, any other wrong
-  letter 2, a swap of adjacent letters 1, a missing or extra letter 1.5.
+  letter 2, a swap of adjacent letters 1, a missing or extra letter 1.5, and ae/oe/ue typed for
+  ä/ö/ü 0.3 and ss for ß 0.5, so German typed without umlauts can carry typos too
+  (`moeglichkwitne` → `Möglichkeiten`: ö, a slip and a swap, 2.3).
 - Most weight allowed (`maxEditCost`): 1.5 for three letters, 2.5 for four, 4 for five or six,
   5 from seven: roughly one, two, three and four mistakes.
 - Frequency (`frequencyRank`): the candidate's position among `UITextChecker`'s completions of
@@ -78,6 +80,10 @@ typed word plus 0.3 per doubling of its frequency rank. The lowest score wins; t
 - Examples: `nciht` → `nicht`, `teh` → `the`, `kalppt` → `klappt`, `fubktiojiert` →
   `funktioniert`, `njxbt` → `nicht`, `wirklixh` → `wirklich`, `hsbd` → `habe` (two slips like
   `hand`, but about three times as common).
+- **Two words for one** (`ichhabe` → `ich habe`): a candidate with one space costs 1 for the
+  missing space plus the edit cost of its two words joined, and ranks as its rarer word. Both
+  words need two letters or more and a frequency rank, so a rare word is never cut in two.
+  UITextChecker's own proposals with a space count under the same rule.
 
 ### Own candidates
 
@@ -89,6 +95,21 @@ in four-letter words). All levels are searched, since a common word with more sl
 rare one with fewer; a level that would pass 1,500 variants is skipped with the levels after
 it. The space press waits for this, so the search stops after 100 ms and drops the level it
 was in.
+
+Two cheaper searches run first, inside the same 100 ms:
+
+- **Long words** (seven letters or more, `completionPrefixes`): UITextChecker's completions of
+  the word's start, from one letter short down to half the word (five letters at least),
+  longest first. Per dictionary, it tries the German respellings first (most pairs replaced,
+  `möglichk` for `moeglichkwitne`) and the word as typed last, four spellings at most. The
+  longest prefix with a completion close enough (`editCost`) wins; after three prefixes that
+  complete only to far-away words it gives up. At most 40 completions per prefix, in Apple's
+  order. This finds long words whose end went wrong, which the slip search can't reach (too
+  many variants) and Apple rarely proposes. A title-case word keeps its capital.
+- **Missing spaces** (`splitCandidates`): every cut into two words of two letters or more
+  that one selected dictionary knows as typed and ranks. A German noun typed in lowercase
+  isn't known as typed, so it never becomes the second word (`dashaus` stays): this keeps
+  unknown compounds whole.
 
 ### German without umlauts, and nouns
 
@@ -176,14 +197,14 @@ npm test -- --runInBand
 ```
 
 - `tests/KeyboardAutocorrectionTests.swift`: language selection, sentence language, scoring,
-  key neighbours, generated candidates, respellings, excluded tokens, Unicode, context
-  invalidation, delayed reports, document boundaries, own-change acknowledgements and undo
-  (including the 3-second window). Jest runs it when `swiftc` is available and skips it
+  key neighbours, generated candidates, respellings, completion prefixes, missing spaces,
+  excluded tokens, Unicode, context invalidation, delayed reports, document boundaries,
+  own-change acknowledgements and undo (including the 3-second window). Jest runs it when `swiftc` is available and skips it
   otherwise.
 - `tests/KeyboardTouchTests.swift` (Catalyst): the controller with a stub provider: correction,
   the Settings switch, English, neighbouring-key slips, umlaut respelling, noun capitalisation,
-  undo and its window, recorrection suppression, double space, silent hosts, cursor changes,
-  field guards, transcript exclusion and held delete.
+  long words, missing spaces, undo and its window, recorrection suppression, double space,
+  silent hosts, cursor changes, field guards, transcript exclusion and held delete.
 - Jest: the settings screen and Preferences row, the App Group mirror, the language list kept in
   step with the keyboard's, and source registration in `withKeyboardExtension.js`.
 
@@ -199,7 +220,8 @@ npm test -- --runInBand
 3. `fubktiojiert`, `njxbt`, `kalppt`, `wirklixh` → `funktioniert`, `nicht`, `klappt`,
    `wirklich`. `schoen`, `moechte`, `strasse`, `gruesse` → `schön`, `möchte`, `Straße`,
    `grüße`; `dass`, `muss`, `Masse` stay. `haus` → `Haus`; `essen`, `morgen` stay.
-   `das ist woe` → `wie`; `this is woe` and `das ist cool` stay.
+   `das ist woe` → `wie`; `this is woe` and `das ist cool` stay. `moeglichkwitne` →
+   `Möglichkeiten`, `ichhabe` → `ich habe` (backspace → `ichhabe`); `dashaus` stays.
 4. Notes, Messages and a Safari text area, with fast typing: no correction is better than one in
    the wrong place. Move the cursor, select text, switch fields, apps and keyboards: no stale
    replacement.
