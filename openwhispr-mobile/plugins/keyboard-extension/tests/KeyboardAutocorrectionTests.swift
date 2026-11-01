@@ -373,6 +373,13 @@ private enum KeyboardAutocorrectionTests {
       "Morgenröte", of: "Morgenrot"))
     check("an umlaut that was typed is no evidence", !KeyboardCorrectionRules.isCompoundCorrection(
       "Übermut", of: "Übermute"))
+    check("an unrelated pair is no evidence", !KeyboardCorrectionRules.isCompoundCorrection(
+      "Feuerwächter", of: "Feuerwache"))
+    check("the respelled umlaut must be where the pair was", !KeyboardCorrectionRules.isCompoundCorrection(
+      "Moglichkeit", of: "Moeglichkwitne") && !KeyboardCorrectionRules.isCompoundCorrection(
+      "Mäglichkeit", of: "Moeglichkwitne"))
+    check("ss for ß is evidence too", KeyboardCorrectionRules.isCompoundCorrection(
+      "Großartigkeit", of: "Grossartigkiet"))
 
     // Two words typed without their space.
     var cuts: [String] = []

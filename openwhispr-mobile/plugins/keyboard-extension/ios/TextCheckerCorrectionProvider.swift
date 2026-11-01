@@ -109,11 +109,12 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   private func knownWordRespellings(of word: String) -> [String] {
     guard let germanDictionary, frequencyRank(of: word) == nil else { return [] }
     let germanKnowsWord = isKnown(word, in: germanDictionary)
-    return KeyboardCorrectionRules.transcriptions(of: word).compactMap { respelling in
-      guard let spelling = germanSpelling(of: respelling.word, in: germanDictionary) else { return nil }
+    let found = KeyboardCorrectionRules.transcriptions(of: word).compactMap { respelling -> String? in
+      guard !stop(), let spelling = germanSpelling(of: respelling.word, in: germanDictionary) else { return nil }
       guard spelling.contains("ß") else { return spelling }
       return !germanKnowsWord || frequencyRank(of: spelling) != nil ? spelling : nil
     }
+    return stop() ? [] : found
   }
 
   /// The respelling as German knows it: as typed, or capitalised for a noun typed in lowercase.
@@ -163,9 +164,10 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     let sentence = languages.count > 1 && !before.isEmpty
       ? KeyboardCorrectionRules.sentenceLanguage(
           before: before, codes: resolvedCodes,
-          knows: { word, code in byCode[code].map { self.isKnown(word, in: $0) } ?? false })
+          knows: { word, code in !self.stop() && (byCode[code].map { self.isKnown(word, in: $0) } ?? false) })
         .flatMap { byCode[$0] }
       : nil
+    guard !stop() else { return [] }
     let checked = sentence.map { [$0] } ?? dictionaries
     let typed = word.lowercased()
     let swap = KeyboardCorrectionRules.swapped(typed)
@@ -205,11 +207,18 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     // `Moeglichkwitne` at the start of a sentence pass. Such a word is still corrected, but only
     // into two common words, a German respelling or a common completion of its start.
     let compound = !flagged && acceptedOnlyAsCompound(word, in: dictionaries)
+    // A press out of time corrects nothing rather than taking a path the checks it skipped
+    // would have ruled out.
+    guard !stop() else {
+      log.info("Autocorrection skipped: out of time")
+      return []
+    }
     if compound { log.info("Autocorrection compound-like capitalised word") }
     guard flagged || compound else {
       // Except German typed without umlauts that a dictionary (English, or one with Swiss or
       // learned spellings) accepts as it is: `moechte`, `strasse`.
       let respelled = knownWordRespellings(of: word)
+      guard !stop() else { return [] }
       let pick = respelled.isEmpty ? word : KeyboardCorrectionRules.replacement(
         for: word, suggestions: respelled, letters: letters, rank: { frequencyRank(of: $0) }) ?? word
       // A correctly typed lowercase German noun is capitalised (`haus` → `Haus`).
@@ -253,9 +262,12 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     }
     // German spelled with ae/oe/ue/ss (`schoen`, `Strasse`); only when ä/ö/ü/ß can be typed
     // in the selected languages, and before anything slower.
-    let respellings = germanDictionary.map { german in
-      KeyboardCorrectionRules.transcriptions(of: word).compactMap { germanSpelling(of: $0.word, in: german) }
+    var respellings = germanDictionary.map { german in
+      KeyboardCorrectionRules.transcriptions(of: word).compactMap {
+        stop() ? nil : germanSpelling(of: $0.word, in: german)
+      }
     } ?? []
+    if stop() { respellings = [] }
     // Long words whose end went wrong, from the completions of their start (`moeglichkwitne` →
     // `möglichk` → `Möglichkeiten`), and two words typed without their space (`ichhabe` →
     // `ich habe`). Both take few lookups, so they run before the slip search can use up the time.
@@ -354,7 +366,7 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
       germanKnows: { self.isKnown($0, in: germanDictionary) },
       othersKnow: { word in
         dictionaries.contains { $0 != germanDictionary && !self.stop() && self.isKnown(word, in: $0) } },
-      isRanked: { self.frequencyRank(of: $0) != nil },
+      isRanked: { word in dictionaries.contains { !self.stop() && self.rank(of: word, in: $0) != nil } },
       lowercaseFlaggedEverywhere: { lower in
         let range = NSRange(lower.startIndex..<lower.endIndex, in: lower)
         return dictionaries.allSatisfy { !self.stop() && self.misspelledRange(of: lower, in: $0) == range }

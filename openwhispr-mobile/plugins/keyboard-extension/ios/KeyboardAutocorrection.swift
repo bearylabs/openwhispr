@@ -147,8 +147,10 @@ enum KeyboardCorrectionRules {
   static let compoundSplitSubjects: Set<String> = ["ich", "du", "er", "es", "wir", "ihr", "sie", "man"]
 
   /// Whether a compound-like word may become `candidate`: two words with a pronoun first
-  /// (`Ich habe`), or a word with an ä/ö/ü/ß the typed word spelled as ae/oe/ue/ss
-  /// (`Moeglichkwitne` → `Möglichkeiten`), so typing without umlauts is evidence of a typo.
+  /// (`Ich habe`), or a word that begins like one of the typed word's respellings up to and
+  /// including an ä/ö/ü/ß it spelled as ae/oe/ue/ss (`Moeglichkwitne` → `möglichk…` →
+  /// `Möglichkeiten`), so typing that letter without its umlaut is the evidence of a typo.
+  /// An unrelated pair is no evidence (`Feuerwache` never becomes `Feuerwächter`).
   static func isCompoundCorrection(_ candidate: String, of word: String,
                                    letters: Set<Character> = KeyboardCorrectionRules.defaultLetters) -> Bool {
     if let (left, _) = splitParts(of: candidate, letters: letters) {
@@ -156,8 +158,16 @@ enum KeyboardCorrectionRules {
     }
     let special: Set<Character> = ["ä", "ö", "ü", "ß"]
     let typed = Set(word.lowercased())
-    return candidate.lowercased().contains { special.contains($0) && !typed.contains($0) }
-      && !transcriptions(of: word).isEmpty
+    let target = Array(candidate.lowercased())
+    return transcriptions(of: word).contains { respelling in
+      // The candidate and the respelling agree up to and including a letter the respelling
+      // introduced.
+      for (index, letter) in Array(respelling.word.lowercased()).enumerated() {
+        guard index < target.count, target[index] == letter else { return false }
+        if special.contains(letter) && !typed.contains(letter) { return true }
+      }
+      return false
+    }
   }
 
   // The keyboard's own letter rows (KeyboardViewController.letterRows), centred as drawn:

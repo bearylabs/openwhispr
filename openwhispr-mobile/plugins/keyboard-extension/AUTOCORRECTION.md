@@ -105,8 +105,11 @@ is still treated as a typo (`acceptedOnlyAsCompound`) when German is selected an
 other selected language does (so `Michael` stays), it has no frequency rank (so `Haus` stays),
 and every dictionary flags it in lowercase (so `Erleben` and `Einmal` stay). It is then only
 corrected (`isCompoundCorrection`) into two common words with a German subject pronoun first
-(`Ich habe`; never `Morgen rot`), or into a common (ranked) respelling or completion that uses
-an ä/ö/ü/ß the word spelled as ae/oe/ue/ss (`Möglichkeiten`). Apple's proposals, single edits
+(`Ich habe`; never `Morgen rot`), or into a common (ranked) respelling or completion that
+begins like one of the word's respellings up to and including an ä/ö/ü/ß the word spelled as
+ae/oe/ue/ss (`möglichk…` → `Möglichkeiten`; an unrelated pair is no evidence, so `Feuerwache`
+never becomes `Feuerwächter`). A press that runs out of time while checking this corrects
+nothing. Apple's proposals, single edits
 and slips aren't used for it. A rare compound starting with a pronoun (`Wirsing` → `Wir sing`)
 or spelled with ae/oe/ue can still be corrected wrongly; backspace right after undoes it.
 
