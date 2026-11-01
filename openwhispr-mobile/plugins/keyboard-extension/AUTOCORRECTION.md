@@ -89,6 +89,24 @@ typed word plus 0.3 per doubling of its frequency rank. The lowest score wins; t
   that proposed them. This is a heuristic: two common words can still be split off an unknown
   compound or name; backspace right after undoes it.
 
+### Two-letter words
+
+A two-letter word is only ever corrected into its two letters swapped (`isSwappable`): `mi` →
+`im`, `os` → `so`, `si` → `is`, `Mi` → `Im` at a sentence start. The typed word must be unknown
+in the sentence's language (in every selected language when the sentence has none) and its swap
+among the first 25 completions of its first letter or of itself there (`maxSwapRank`), i.e. one
+of the language's most common words. Nothing else is proposed, so `qm` stays.
+
+### Capitalised words German accepts as compounds
+
+German's dictionary accepts almost any capitalised word as a possible compound noun, so
+`Ichhabe` or `Moeglichkwitne` at the start of a sentence pass the misspelling check. A
+capitalised word that has no frequency rank and that every dictionary flags in lowercase
+(`acceptedOnlyAsCompound`) is still corrected, but only into two common words (`Ich habe`), a
+German respelling that is more than such a compound, or a ranked completion of its start
+(`Möglichkeiten`). Apple's proposals, single edits and slips aren't used for it, so a rare
+compound noun stays as typed.
+
 ### Own candidates
 
 `UITextChecker` doesn't always propose swaps or missing/extra letters and rarely words several
@@ -149,7 +167,8 @@ Swift rules with a stand-in dictionary. Without Apple's own proposals (worst cas
 ### Never corrected
 
 - Digits, punctuation, underscores, mixed or all caps, URL- and email-like tokens, emoji,
-  decomposed combining sequences, words under three or over twenty letters, and words following
+  decomposed combining sequences, one-letter words, two-letter words except for their swap
+  (below), words over twenty letters, and words following
   punctuation.
 - Fields other than default text fields: secure fields, fields hiding their text,
   `.autocorrectionType == .no`, URL, email, ASCII-only, numeric and other specialised keyboard
@@ -228,6 +247,9 @@ npm test -- --runInBand
    `grüße`; `dass`, `muss`, `Masse` stay. `haus` → `Haus`; `essen`, `morgen` stay.
    `das ist woe` → `wie`; `this is woe` and `das ist cool` stay. `moeglichkwitne` →
    `Möglichkeiten`, `ichhabe` → `ich habe` (backspace → `ichhabe`); `dashaus` stays.
+   At a sentence start, `Ichhabe` → `Ich habe` and `Moeglichkwitne` → `Möglichkeiten`;
+   `Donaudampfschiff` stays. `mi`, `os`, `Mi` → `im`, `so`, `Im`; `qm`, `am`, `is` (in English)
+   stay.
 4. Notes, Messages and a Safari text area, with fast typing: no correction is better than one in
    the wrong place. Move the cursor, select text, switch fields, apps and keyboards: no stale
    replacement.

@@ -103,6 +103,27 @@ enum KeyboardCorrectionRules {
       && (word == lower || word == String(lower.prefix(1)).uppercased() + lower.dropFirst())
   }
 
+  /// A two-letter word whose only correction is swapping its letters (`mi` → `im`, `os` →
+  /// `so`, `Si` → `Is`): two different letters of the selected languages, lowercase or with a
+  /// capital first letter.
+  static func isSwappable(_ word: String,
+                          letters: Set<Character> = KeyboardCorrectionRules.defaultLetters) -> Bool {
+    let characters = Array(word.lowercased())
+    return characters.count == 2 && word.unicodeScalars.count == 2 && characters[0] != characters[1]
+      && characters.allSatisfy { letters.contains($0) }
+      && (word == word.lowercased() || word == capitalized(word.lowercased()))
+  }
+
+  /// The two letters swapped, the capital staying first (`Mi` → `Im`).
+  static func swapped(_ word: String) -> String {
+    let swap = String(word.lowercased().reversed())
+    return word == word.lowercased() ? swap : capitalized(swap)
+  }
+
+  /// A two-letter swap must be among the first this many completions of its first letter, or
+  /// of both its letters: the language's most common words (`im`, `so`, `is`).
+  static let maxSwapRank = 25
+
   // The keyboard's own letter rows (KeyboardViewController.letterRows), centred as drawn:
   // the middle row half a key in, the bottom row a whole key in (shift sits beside it).
   private static let keyRows: [(keys: String, offset: Double)] = [
@@ -423,6 +444,11 @@ enum KeyboardCorrectionRules {
   static func replacement(for word: String, suggestions: [String],
                           letters: Set<Character> = KeyboardCorrectionRules.defaultLetters,
                           rank: (String) -> Int? = { _ in nil }) -> String? {
+    // A two-letter word only ever becomes its swap (`mi` → `im`).
+    if isSwappable(word, letters: letters) {
+      let swap = swapped(word)
+      return suggestions.contains(swap) ? swap : nil
+    }
     guard isWord(word, letters: letters) else { return nil }
     // A lowercase respelling may also come capitalised: German nouns (`strasse` → `Straße`).
     let respellings = Dictionary(transcriptions(of: word).flatMap { respelling in
@@ -663,7 +689,9 @@ struct KeyboardAutocorrection {
                            delimiter: String = " ") -> Edit? {
     reconcile(context)
     let letters = provider.letters
-    guard Self.delimiters.contains(delimiter), expected != nil, KeyboardCorrectionRules.isWord(word, letters: letters),
+    guard Self.delimiters.contains(delimiter), expected != nil,
+          KeyboardCorrectionRules.isWord(word, letters: letters)
+            || KeyboardCorrectionRules.isSwappable(word, letters: letters),
           (context.after ?? "").isEmpty || context.after?.first?.isWhitespace == true,
           let replacement = KeyboardCorrectionRules.replacement(
             for: word,

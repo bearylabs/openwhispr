@@ -690,6 +690,14 @@ private enum KeyboardTouchTests {
     checks.check("long word undo", TestEnvironment.proxy.documentContextBeforeInput == "moeglichkwitne")
 
     controller = keyboard()
+    controller.touchTestSetProvider(CorrectionStub(words: ["im"]))
+    controller.touchTestTypeWord("mi")
+    controller.touchTestTapSpace()
+    checks.check("two-letter swap corrected", TestEnvironment.proxy.documentContextBeforeInput == "im ")
+    controller.touchTestTapDelete()
+    checks.check("two-letter swap undo", TestEnvironment.proxy.documentContextBeforeInput == "mi")
+
+    controller = keyboard()
     controller.touchTestSetProvider(CorrectionStub(words: ["ich habe"], rank: 5))
     controller.touchTestTypeWord("ichhabe")
     controller.touchTestTapSpace()

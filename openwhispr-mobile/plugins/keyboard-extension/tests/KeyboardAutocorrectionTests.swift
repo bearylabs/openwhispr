@@ -317,6 +317,25 @@ private enum KeyboardAutocorrectionTests {
     check("far-away completions stop after a few prefixes",
           farLookups == KeyboardCorrectionRules.maxCompletingPrefixes)
 
+    // Two-letter words: only their letters swapped.
+    check("two-letter swap", KeyboardCorrectionRules.replacement(for: "mi", suggestions: ["im"]) == "im")
+    check("two-letter swap keeps the capital first", KeyboardCorrectionRules.replacement(
+      for: "Si", suggestions: ["Is"]) == "Is")
+    check("two-letter words get nothing but their swap", KeyboardCorrectionRules.replacement(
+      for: "qm", suggestions: ["am", "im"]) == nil)
+    check("swapped", KeyboardCorrectionRules.swapped("os") == "so" && KeyboardCorrectionRules.swapped("Mi") == "Im")
+    check("swappable", KeyboardCorrectionRules.isSwappable("mi") && KeyboardCorrectionRules.isSwappable("Os"))
+    check("a double letter isn't swappable", !KeyboardCorrectionRules.isSwappable("aa"))
+    check("all caps isn't swappable", !KeyboardCorrectionRules.isSwappable("OS"))
+    check("one or three letters aren't swappable",
+          !KeyboardCorrectionRules.isSwappable("a") && !KeyboardCorrectionRules.isSwappable("abc"))
+    check("digits aren't swappable", !KeyboardCorrectionRules.isSwappable("a1"))
+    check("umlauts only with German", KeyboardCorrectionRules.isSwappable("üb")
+      && !KeyboardCorrectionRules.isSwappable("üb", letters: KeyboardCorrectionLanguage.letters(of: [.english])))
+    var (swapState, swapContext) = typed("mi", prefix: "ich bin ", document: document)
+    check("a two-letter word is tracked and swapped", swapState.correction(
+      in: swapContext, provider: StubProvider(words: ["im"]))?.replacement == "im")
+
     // Two words typed without their space.
     var cuts: [String] = []
     check("every cut into words of two letters or more",
