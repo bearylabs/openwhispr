@@ -26,7 +26,7 @@ test('autocorrection is on unless the app switches it off', () => {
   expect(controller).toContain('guard context.isSafe, autocorrectionSwitchedOn() else');
   expect(controller).not.toContain('spaceButton.addGestureRecognizer');
   // Default-on must not bypass host restrictions or move correction into all insertions.
-  expect(controller).toContain('allowed: ordinaryField && !fieldHidesItsText');
+  expect(controller).toContain('allowed: document != nil && ordinaryField && !fieldHidesItsText');
   expect(controller).toContain('proxy.autocorrectionType != .no');
   expect(controller).toContain('!applyDoubleSpacePeriod() && !applyManualSpaceCorrection()');
 });
