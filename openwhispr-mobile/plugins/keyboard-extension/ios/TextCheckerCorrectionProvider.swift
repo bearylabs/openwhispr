@@ -310,7 +310,9 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
       for candidate in respellings + completed + splits
       where KeyboardCorrectionRules.isCompoundCorrection(candidate, of: word, letters: letters) {
         if isOver() { compoundCandidates = []; break }
-        let accepted = candidate.contains(" ") || frequencyRank(of: candidate) != nil
+        let accepted = candidate.contains(" ") || dictionaries.contains {
+          !isOver() && rank(of: candidate, in: $0) != nil
+        }
         if isOver() { compoundCandidates = []; break }
         if accepted { compoundCandidates.append(candidate) }
       }
