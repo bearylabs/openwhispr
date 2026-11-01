@@ -4,6 +4,7 @@ import {
   setKeyboardAutocorrectionLanguages,
   startKeyboardAutocorrectionSync,
 } from '@/lib/keyboardAutocorrectionSync';
+import { AppState } from 'react-native';
 import { useConfigStore } from '@/store/useConfigStore';
 
 const store: Record<string, string> = {};
@@ -131,6 +132,30 @@ describe('keyboard dictionary mirror', () => {
     mockDictionaryStore.emit();
     expect(wordWrites()).toHaveLength(count);
     stop();
+  });
+
+  it('retries a failed write when the app comes back', () => {
+    const listeners: Array<(state: string) => void> = [];
+    const remove = jest.fn();
+    jest.spyOn(AppState, 'addEventListener').mockImplementationOnce(((
+      _type: string,
+      listener: (state: string) => void,
+    ) => {
+      listeners.push(listener);
+      return { remove };
+    }) as any);
+    useConfigStore.setState({ config: { defaultMode: 'cloud' } as any });
+    mockTiers = [['Hrudek'], [], []];
+    mockFailWrites = true;
+    const stop = startKeyboardAutocorrectionSync();
+    expect(words()).toBeUndefined();
+    mockFailWrites = false;
+    listeners.forEach((listener) => listener('background'));
+    expect(words()).toBeUndefined();
+    listeners.forEach((listener) => listener('active'));
+    expect(JSON.parse(words()).personal).toEqual(['Hrudek']);
+    stop();
+    expect(remove).toHaveBeenCalled();
   });
 
   it('empties the copy before an account reset and publishes nothing in between', () => {

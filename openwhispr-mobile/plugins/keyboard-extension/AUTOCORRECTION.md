@@ -37,10 +37,13 @@ autocorrection.
   without controls, invisible characters or any spacing but single spaces, at most 64 UTF-16
   units (a longer one is skipped), deduplicated case-insensitively with personal words first, and
   capped at 2,000 entries and 64 KiB, so team words go first. A failed write is retried on the
-  next change and at the next start. While autocorrection is off the value is empty.
+  next change, when the app comes back to the foreground and at the next start. While
+  autocorrection is off the value is empty.
 - Sign-out and an account switch empty the value before the stores reset and keep it empty until
   both have (`clearingKeyboardWords` in `syncEngine.ts`), so no mix of the two accounts' words is
-  ever written.
+  ever written. Afterwards the keyboard follows the dictionary dictation uses: the words still
+  stored on the device apply again once the app reloads them, until another account's sign-in
+  wipes them; a previous account's shared words don't.
 - The keyboard reads it at every correction, only with Full Access, and parses it again only when
   it changed (`KeyboardUserDictionary`, which enforces the bounds again and drops it with the text
   checker on a memory warning or when the keyboard disappears).
@@ -317,6 +320,6 @@ npm test -- --runInBand
    replacement.
 5. Add `Hrudek` and `OpenWhispr` to the dictionary: `Hrudek` + space stays, `Hrudke` → `Hrudek`,
    `openwhsipr` → `OpenWhispr` (backspace → `openwhsipr`). Remove them: `Hrudek` is corrected
-   like any word again. Sign out: none of them applies.
+   like any word again. Switch accounts: the previous account's words no longer apply.
 6. Password, URL, email and `.no` fields, `foo_bar`, `fooBar`, numbers, emoji, dictation and
    assistant output: unchanged.

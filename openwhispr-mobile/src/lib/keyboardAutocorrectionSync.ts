@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { useConfigStore } from '@/store/useConfigStore';
 import { useDictionaryStore } from '@/store/useDictionaryStore';
 import { useSharedDictionaryStore } from '@/store/useSharedDictionaryStore';
@@ -109,7 +109,12 @@ export function startKeyboardAutocorrectionSync(): () => void {
     useDictionaryStore.subscribe(writeKeyboardWords),
     useSharedDictionaryStore.subscribe(writeKeyboardWords),
   ];
+  // A write that failed is retried when the app comes back, even if nothing changed meanwhile.
+  const appState = AppState.addEventListener('change', (state) => {
+    if (state === 'active') writeKeyboardWords();
+  });
   return () => {
     for (const unsubscribe of unsubscribers) unsubscribe();
+    appState.remove();
   };
 }

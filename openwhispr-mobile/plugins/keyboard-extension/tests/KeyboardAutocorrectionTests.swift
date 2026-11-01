@@ -107,6 +107,8 @@ private enum KeyboardAutocorrectionTests {
     check("title case capitalises a lowercase word", words.target(for: "Kubectk")?.word == "Kubectl"
       && words.target(for: "kubectk")?.word == "kubectl")
     check("a missing letter becomes the user's word", words.target(for: "Lenart")?.word == "Lennart")
+    check("three typed letters may become a four-letter word", userDictionary(["Hruk"]).target(for: "Hru")?.word == "Hruk"
+      && userDictionary(["Hruk"]).target(for: "Hr") == nil)
     check("far-away words are no target", words.target(for: "Hruxyz") == nil
       && words.target(for: "Hdurke") == nil)
     check("shared, short, all-caps and phrase words are no target",
@@ -146,6 +148,9 @@ private enum KeyboardAutocorrectionTests {
     var name = typed("Hrudke", document: document)
     check("a typo becomes the user's name", name.0.correction(
       in: name.1, provider: StubProvider(words: ["Hrude"]), dictionary: words)?.replacement == "Hrudek")
+    var short = typed("Hru", document: document)
+    check("a three-letter typo becomes the user's word", short.0.correction(
+      in: short.1, provider: StubProvider(words: []), dictionary: userDictionary(["Hruk"]))?.replacement == "Hruk")
     var ordinary = typed("nciht", document: document)
     check("other words correct as before", ordinary.0.correction(
       in: ordinary.1, provider: StubProvider(), dictionary: words)?.replacement == "nicht")

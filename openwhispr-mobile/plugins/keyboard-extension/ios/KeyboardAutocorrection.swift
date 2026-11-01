@@ -147,6 +147,8 @@ struct KeyboardUserDictionary {
   static let maxEntryLength = 64
   static let maxPhraseWords = 4
   static let targetLengths = 4...20
+  /// Typed words a scan looks at: three letters may be a four-letter word missing one.
+  static let typedLengths = 3...20
   /// One swap, missing or extra letter, wrong key beside the right one, letter for its umlaut,
   /// or a few ae/oe/ue/ss typed for ä/ö/ü/ß.
   static let maxTargetCost = 1.5
@@ -220,7 +222,7 @@ struct KeyboardUserDictionary {
   func target(for word: String, shouldStop: () -> Bool = { false }) -> (word: String, cost: Double)? {
     let lower = word.lowercased()
     let length = lower.count
-    guard !targetsByLength.isEmpty, Self.targetLengths.contains(length) else { return nil }
+    guard !targetsByLength.isEmpty, Self.typedLengths.contains(length) else { return nil }
     var best: (target: Target, cost: Double)?
     var tied = false
     // A target is at most one letter longer (an insertion costs 1.5) or two shorter (pairs
