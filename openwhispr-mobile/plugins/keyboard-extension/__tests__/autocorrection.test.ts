@@ -36,10 +36,15 @@ test('the selected dictionaries are all consulted', () => {
   const provider = fs.readFileSync(path.join(ios, 'TextCheckerCorrectionProvider.swift'), 'utf8');
   expect(rules).toContain('dictionaries: ["de_DE", "de-DE", "de"]');
   expect(rules).toContain('dictionaries: ["en_US", "en-US", "en_GB", "en-GB", "en"]');
-  // A word any selected dictionary knows is never replaced.
+  // A word any selected dictionary knows is never replaced, except a capitalised word German
+  // accepts only as a possible compound.
   expect(provider).toContain(
-    'dictionaries.allSatisfy({ misspelledRange(of: word, in: $0) == range })',
+    'let flagged = dictionaries.allSatisfy { misspelledRange(of: word, in: $0) == range }',
   );
+  expect(provider).toContain(
+    'let compound = !flagged && acceptedOnlyAsCompound(word, in: dictionaries)',
+  );
+  expect(provider).toContain('guard flagged || compound else');
   const controller = fs.readFileSync(path.join(ios, 'KeyboardViewController.swift'), 'utf8');
   expect(controller).toContain('"keyboard_autocorrection_languages"');
   expect(controller).toContain('KeyboardHandoffProvider.shared.autocorrectionLanguageSetting()');
