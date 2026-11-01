@@ -730,6 +730,18 @@ private struct DictationLinkView: View {
   }
 }
 
+/// The field's `documentIdentifier`, or nil when iOS has none. Swift declares it a
+/// non-optional UUID, but the proxy sometimes returns nil, and reading it straight traps in
+/// the bridge (`UUID._unconditionallyBridgeFromObjectiveC`), leaving an empty keyboard.
+private enum TextDocumentIdentity {
+  static func identifier(of proxy: AnyObject) -> UUID? {
+    let selector = #selector(getter: UITextDocumentProxy.documentIdentifier)
+    guard let object = proxy as? NSObjectProtocol, object.responds(to: selector) else { return nil }
+    // A getter returns its object unretained (+0).
+    return (object.perform(selector)?.takeUnretainedValue() as? NSUUID) as UUID?
+  }
+}
+
 final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDelegate {
   private static func infoString(_ key: String) -> String? {
     guard let value = Bundle.main.object(forInfoDictionaryKey: key) as? String else { return nil }
@@ -1600,10 +1612,12 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     case .default: ordinaryField = true
     default: ordinaryField = false
     }
+    // A field without an identity is never corrected: a fresh id never matches a tracked one.
+    let document = TextDocumentIdentity.identifier(of: proxy)
     return KeyboardCorrectionContext.reported(
-      document: proxy.documentIdentifier, before: proxy.documentContextBeforeInput,
+      document: document ?? UUID(), before: proxy.documentContextBeforeInput,
       after: proxy.documentContextAfterInput, selection: proxy.selectedText,
-      allowed: ordinaryField && !fieldHidesItsText
+      allowed: document != nil && ordinaryField && !fieldHidesItsText
         && proxy.isSecureTextEntry != true && proxy.autocorrectionType != .no,
       hasText: proxy.hasText)
   }
@@ -2551,8 +2565,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func typeText(_ text: String) {
     // All non-manual insertion paths (especially dictation/agent) abandon tracking.
     autocorrection.invalidate()
-    textDocumentProxy.insertText(text)
-    typedDocument = textDocumentProxy.documentIdentifier
+    let proxy = textDocumentProxy
+    proxy.insertText(text)
+    typedDocument = TextDocumentIdentity.identifier(of: proxy)
   }
 
   private func noteFieldReport() {
@@ -2560,7 +2575,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     if proxy.hasText || proxy.documentContextBeforeInput?.isEmpty == false
       || proxy.documentContextAfterInput?.isEmpty == false
     {
-      reportingDocument = proxy.documentIdentifier
+      reportingDocument = TextDocumentIdentity.identifier(of: proxy)
     }
   }
 
@@ -2568,7 +2583,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   /// reported no text in it since. Some hosts never report it, so shift and the return key
   /// can't go by it there.
   private var fieldHidesItsText: Bool {
-    let document = textDocumentProxy.documentIdentifier
+    // Without an identity, earlier typing can't be tied to this field.
+    guard let document = TextDocumentIdentity.identifier(of: textDocumentProxy) else { return false }
     return typedDocument == document && reportingDocument != document
   }
 

@@ -73,6 +73,10 @@ private final class TestTextProxy: NSObject, UITextDocumentProxy {
   }
 }
 
+/// Objects answering documentIdentifier, with and without one.
+private final class NamedDocument: NSObject { @objc var documentIdentifier: NSUUID? = NSUUID() }
+private final class UnnamedDocument: NSObject { @objc var documentIdentifier: NSUUID? }
+
 private enum TestPage {
   case letters, numbers, symbols
 }
@@ -226,6 +230,7 @@ private enum KeyboardTouchTests {
       checkProductionLayout("greyed return, \(name) field", width: 402, proxy: emptySearchField(type), &checks)
     }
     checkFieldAwareKeys(&checks)
+    checkMissingDocumentIdentifier(&checks)
     checkLayoutChanges(&checks)
     checkTyping(&checks)
 
@@ -520,6 +525,23 @@ private enum KeyboardTouchTests {
     controller.touchTestTapSpace()
     checks.check("double space still makes period", TestEnvironment.proxy.documentContextBeforeInput == "nciht. ")
 
+    // The field loses its identity while a word is tracked: nothing is replaced.
+    controller = keyboard()
+    controller.touchTestTypeWord("nciht")
+    do {
+      let getter = class_getInstanceMethod(
+        TestTextProxy.self, #selector(getter: UITextDocumentProxy.documentIdentifier))!
+      let missing: @convention(block) (AnyObject) -> AnyObject? = { _ in nil }
+      let missingImplementation = imp_implementationWithBlock(missing)
+      let original = method_setImplementation(getter, missingImplementation)
+      defer {
+        method_setImplementation(getter, original)
+        imp_removeBlock(missingImplementation)
+      }
+      controller.touchTestTapSpace()
+    }
+    checks.check("no document identity: space does not correct", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+
     for mark in ["?", "!", ".", ","] {
       controller = keyboard()
       controller.touchTestTypeWord("nciht")
@@ -754,6 +776,58 @@ private enum KeyboardTouchTests {
     checks.check("twitter 123: return", !twitterKeyboard.touchTestReturn.isHidden && shortcuts().isEmpty)
     twitterKeyboard.touchTestTapMode()
     checks.check("twitter back on letters: @ and # again", shortcuts() == ["@", "#"])
+  }
+
+  /// iOS sometimes reports no documentIdentifier although Swift declares one; reading it must
+  /// neither trap nor tie earlier typing to a field it can't name.
+  @MainActor
+  static func checkMissingDocumentIdentifier(_ checks: inout TouchChecks) {
+    TestEnvironment.reset()
+    defer { TestEnvironment.reset() }
+
+    let named = NamedDocument()
+    checks.check("document identity: read when the field has one",
+      TextDocumentIdentity.identifier(of: named) == named.documentIdentifier.map { $0 as UUID })
+    checks.check("document identity: nil when the field has none",
+      TextDocumentIdentity.identifier(of: UnnamedDocument()) == nil)
+    checks.check("document identity: nil without the getter",
+      TextDocumentIdentity.identifier(of: NSObject()) == nil)
+
+    // The proxy's own getter returns nil, as iOS's does at times.
+    let proxy = emptySearchField(.default)
+    proxy.hasText = true
+    TestEnvironment.proxy = proxy
+    let controller = KeyboardViewController.makeLaidOutKeyboard(width: 402)
+    // Reported with an identity: the field holds text.
+    controller.viewWillAppear(false)
+    let getter = class_getInstanceMethod(
+      TestTextProxy.self, #selector(getter: UITextDocumentProxy.documentIdentifier))!
+    let missing: @convention(block) (AnyObject) -> AnyObject? = { _ in nil }
+    let missingImplementation = imp_implementationWithBlock(missing)
+    let original = method_setImplementation(getter, missingImplementation)
+    defer {
+      method_setImplementation(getter, original)
+      imp_removeBlock(missingImplementation)
+    }
+    proxy.hasText = false
+    proxy.documentContextBeforeInput = ""
+    controller.viewWillAppear(false)
+    controller.touchTestTapLetter(0)
+    controller.touchTestTextDidChange()
+    checks.check("no document identity: typing reaches the field", proxy.inserted == ["Q"])
+    controller.touchTestTapReturn()
+    checks.check("no document identity: an empty field still greys return", proxy.inserted == ["Q"])
+
+    // A field reporting text without an identity, as the keyboard appears.
+    let reporting = TestTextProxy()
+    reporting.hasText = true
+    reporting.documentContextBeforeInput = "Hallo "
+    TestEnvironment.proxy = reporting
+    let appearing = KeyboardViewController.makeLaidOutKeyboard(width: 402)
+    appearing.viewWillAppear(false)
+    appearing.touchTestTextDidChange()
+    appearing.touchTestTapReturn()
+    checks.check("no document identity: a field reporting text appears and types", reporting.inserted == ["\n"])
   }
 
   /// Layout follows rotation, the globe key, the real width, a short view and the review card.
