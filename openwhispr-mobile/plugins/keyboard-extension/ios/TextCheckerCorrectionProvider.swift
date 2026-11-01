@@ -336,7 +336,7 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     // The correction takes the noun's capital when it is one (`strasse` → `Straße`).
     let final = pick.map(nounCased)
     // Only control-flow metadata, never the original, proposals or surrounding text.
-    log.info("Autocorrection proposals: dictionaries=\(dictionaries.count, privacy: .public) compound=\(compound, privacy: .public) dictionaryCount=\(suggestions.count, privacy: .public) completions=\(completed.count, privacy: .public) splits=\(splits.count, privacy: .public) neighborSlips=\(generated, privacy: .public) slipSearchTimedOut=\(timedOut, privacy: .public) capitalised=\(final.map { $0 != $0.lowercased() } == true && word == word.lowercased(), privacy: .public) corrects=\(final != nil, privacy: .public)")
+    log.info("Autocorrection proposals: dictionaries=\(dictionaries.count, privacy: .public) compound=\(compound, privacy: .public) dictionaryCount=\(suggestions.count, privacy: .public) completions=\(completed.count, privacy: .public) splits=\(splits.count, privacy: .public) neighborSlips=\(generated, privacy: .public) slipSearchTimedOut=\(self.timedOut, privacy: .public) capitalised=\(final.map { $0 != $0.lowercased() } == true && word == word.lowercased(), privacy: .public) corrects=\(final != nil, privacy: .public)")
     return final.map { [$0] } ?? []
   }
 
