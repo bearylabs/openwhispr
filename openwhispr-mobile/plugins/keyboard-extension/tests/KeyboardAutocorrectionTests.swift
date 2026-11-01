@@ -360,10 +360,16 @@ private enum KeyboardAutocorrectionTests {
     check("qm is am", slip("qm") == "am")
     check("several common slips stay", slip("ot", sentence: [en]) == nil)
     check("no common slip stays", slip("qq") == nil && slip("xv") == nil)
-    for kept in ["km", "ca", "zb", "dh", "di", "mo", "sa", "st", "nr", "hm", "na", "on"] {
+    for kept in ["km", "ca", "zb", "dh", "di", "mo", "sa", "st", "nr", "hm", "na", "on", "mg", "ms",
+                 "dl", "hr", "eg", "mr", "do", "dr", "kb", "et", "Do", "Mr", "Mg"] {
       check("kept from slips: \(kept)", slip(kept) == nil && slip(kept, sentence: [de]) == nil
-        && slip(kept, sentence: [en]) == nil)
+        && slip(kept, sentence: [en]) == nil
+        && KeyboardCorrectionRules.twoLetterSlip(of: kept, sentence: [de], selected: [de]) == nil
+        && (["dh", "di", "mo"].contains(kept)
+            || KeyboardCorrectionRules.twoLetterSlip(of: kept, sentence: [en], selected: [en]) == nil))
     }
+    check("German abbreviations are only German", KeyboardCorrectionRules.twoLetterSlip(
+      of: "di", sentence: [en], selected: [en]) == "do")
     check("a two-letter word may become a one-key slip", KeyboardCorrectionRules.replacement(
       for: "ia", suggestions: ["is"]) == "is")
     check("a two-letter word never becomes a farther word", KeyboardCorrectionRules.replacement(

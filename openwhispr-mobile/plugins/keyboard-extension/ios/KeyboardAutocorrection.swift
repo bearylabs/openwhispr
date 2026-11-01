@@ -56,7 +56,9 @@ struct KeyboardCorrectionLanguage: Equatable {
                                             "so", "um", "wo", "zu", "äh"],
                            keptTwoLetterWords: ["hä", "ma", "ey", "yo", "ui", "en", "ho", "km", "zb", "dh",
                                                 "ca", "jo", "mo", "di", "sa", "st", "nr", "hm", "mh",
-                                                "eu", "ex", "co"])
+                                                "eu", "ex", "co", "do", "dr", "kb", "et", "ag", "mg",
+                                                "ms", "dl", "hr", "eg", "ph", "pr", "ip", "lb", "dj",
+                                                "hp", "bw", "ps", "gb"])
   static let english = Self(code: "en", dictionaries: ["en_US", "en-US", "en_GB", "en-GB", "en"],
                             letters: latin,
                             twoLetterWords: ["ah", "am", "an", "as", "at", "be", "by", "do", "eh", "go",
@@ -65,7 +67,9 @@ struct KeyboardCorrectionLanguage: Equatable {
                                              "us", "we"],
                             keptTwoLetterWords: ["ad", "em", "ew", "ho", "ma", "ow", "pa", "ta", "ya",
                                                  "ye", "yo", "ox", "mu", "re", "hm", "mh", "st", "co",
-                                                 "ex", "eu", "id", "uk"])
+                                                 "ex", "eu", "id", "uk", "mg", "ms", "dl", "hr", "eg",
+                                                 "mr", "ph", "pr", "ip", "lb", "dj", "hp", "bw", "ps",
+                                                 "gb", "md", "mt", "nl", "kt", "ft"])
   /// Adding a language: an entry here, its code in the app's list, and tests.
   static let all = [german, english]
   static let defaultSelection = [german, english]

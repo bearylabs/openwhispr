@@ -182,7 +182,9 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     }
     // A slip only for a word no selected dictionary knows (`km`, `ca` stay).
     guard !stop(), let slip = KeyboardCorrectionRules.twoLetterSlip(of: word, sentence: sentence, selected: installed),
-          dictionaries.allSatisfy({ !stop() && !isKnown(word.lowercased(), in: $0) }),
+          // As typed and in lowercase: a dictionary may know only `Mr` or `Do`.
+          Set([word, word.lowercased()]).allSatisfy({ form in
+            dictionaries.allSatisfy { !stop() && !isKnown(form, in: $0) } }),
           knownInSentence(slip), !stop() else {
       log.info("Autocorrection two-letter skipped: sentenceLanguage=\(code != nil, privacy: .public)")
       return []
