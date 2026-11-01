@@ -24,9 +24,14 @@
 
 1. Start: create both branches from `upstream/main`, push both. Work only in `exp/`.
 2. Land a good state: tests green on the `exp/` SHA (`TESTING.md`), then a PR inside the fork,
-   squash-merged. Its title is the commit message (Conventional Commit), its body the commit body:
-   `gh pr create --repo bearylabs/openwhispr --base <type>/<topic> --head exp/<type>/<topic>`
-   (without `--repo` gh targets upstream). Several ordered commits = several PRs, one per commit.
+   squash-merged into one clean commit (Conventional Commit subject and body):
+   ```sh
+   gh pr create --repo bearylabs/openwhispr --base <type>/<topic> --head exp/<type>/<topic> --title "…" --body "…"
+   gh pr merge <n> --repo bearylabs/openwhispr --squash --subject "<title>" --body "<body>"
+   ```
+   Always pass `--repo` (gh otherwise targets upstream) and `--subject` (otherwise GitHub appends
+   the fork's `(#n)`, which upstream links to its own PR #n). Several ordered commits = several
+   PRs, one per commit.
 3. Right after: `git switch exp/<type>/<topic> && git merge origin/<type>/<topic>` and push, so
    the next PR shows only new work. The trees must then be equal
    (`git rev-parse origin/<type>/<topic>^{tree} origin/exp/<type>/<topic>^{tree}`), which makes
