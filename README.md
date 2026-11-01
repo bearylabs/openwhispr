@@ -32,6 +32,9 @@ The app branch's `CLAUDE.md` is binding as well.
 4. Merge `origin/<type>/<topic>` back into `exp/` and push. Both trees must be equal.
 5. Upstream PR (draft) from `<type>/<topic>`: what, why, link to the test run. Later landings update it.
 
+Build the iOS app ("build the app"): repo `bearylabs/ios-builds`, local `/home/hrudek/dev/ios-builds`.
+Read its `README.md` first and build only a SHA with green tests, never from `dev-rules`.
+
 Rebase a feature branch only when asked: disable ruleset 26306024
 (`gh api -X PUT repos/bearylabs/openwhispr/rulesets/26306024 -f enforcement=disabled`),
 `push --force-with-lease --no-verify`, re-enable (`enforcement=active`), merge into `exp/`.
