@@ -16,8 +16,11 @@ least one and at most three. The Preferences row shows the selection, or "Off".
 - The keyboard reads both at every manual space, so a change applies without reopening it.
   Only an explicit `"0"` switches correction off. `KeyboardCorrectionLanguage.selection(from:)`
   ignores unknown codes, drops duplicates and caps the list at three; nothing usable means
-  German and English. The controller rebuilds `TextCheckerCorrectionProvider` only when the
-  parsed selection changes.
+  German and English. The controller creates `TextCheckerCorrectionProvider` on demand and
+  reuses it while the parsed selection is unchanged. It releases the provider and its caches
+  when the keyboard disappears or gets a memory warning, since the extension stays resident
+  under a tight memory limit; the next correction attempt (space or punctuation) creates it
+  again. Dictionary lookups run in local `autoreleasepool` scopes to bound temporaries.
 - Correction needs no Full Access, but without it the keyboard can't read the App Group, so it
   corrects German and English whatever the app says.
 

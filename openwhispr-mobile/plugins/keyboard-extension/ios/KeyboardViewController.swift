@@ -1378,6 +1378,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   override func viewWillDisappear(_ animated: Bool) {
     super.viewWillDisappear(animated)
     autocorrection.invalidate()
+    releaseCorrectionDictionaries()
     logRecordMarker("viewWillDisappear")
     stopDeleteRepeating()
     issueResetTimer?.invalidate()
@@ -1386,6 +1387,17 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     agentReviewNoteResetTimer?.invalidate()
     stopRecordingPoll()
     stopHandoffObservers()
+  }
+
+  override func didReceiveMemoryWarning() {
+    super.didReceiveMemoryWarning()
+    releaseCorrectionDictionaries()
+  }
+
+  /// The extension's process stays alive while the keyboard is hidden, under a tight memory
+  /// limit: drop the text checker and its caches; the next space builds them again.
+  private func releaseCorrectionDictionaries() {
+    textCheckerProvider = nil
   }
 
   deinit {
@@ -1631,8 +1643,12 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       autocorrection.invalidate()
       return false
     }
-    guard let edit = autocorrection.correction(
-            in: context, provider: currentCorrectionProvider(), delimiter: delimiter),
+    // The lookups' autoreleased temporaries are freed here, not at the end of the run loop pass.
+    let edit = autoreleasepool {
+      autocorrection.correction(
+        in: context, provider: currentCorrectionProvider(), delimiter: delimiter)
+    }
+    guard let edit,
           // UITextChecker may take time. Re-read the proxy immediately before any deletion.
           correctionContext() == edit.context else {
       autocorrection.invalidate()

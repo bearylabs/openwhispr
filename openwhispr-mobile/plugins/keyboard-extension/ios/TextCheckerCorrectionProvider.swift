@@ -45,10 +45,14 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
       }
   }
 
+  /// Called thousands of times per space press, so each lookup frees its autoreleased
+  /// temporaries at once instead of holding them until the press ends.
   private func misspelledRange(of word: String, in dictionary: String) -> NSRange {
-    let range = NSRange(word.startIndex..<word.endIndex, in: word)
-    return checker.rangeOfMisspelledWord(
-      in: word, range: range, startingAt: 0, wrap: false, language: dictionary)
+    autoreleasepool {
+      let range = NSRange(word.startIndex..<word.endIndex, in: word)
+      return checker.rangeOfMisspelledWord(
+        in: word, range: range, startingAt: 0, wrap: false, language: dictionary)
+    }
   }
 
   private func isKnown(_ word: String, in dictionary: String) -> Bool {
@@ -65,19 +69,21 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
 
   /// The candidate's position among one dictionary's completions of its first two letters.
   private func rank(of candidate: String, in dictionary: String) -> Int? {
-    let prefix = String(candidate.prefix(2)).lowercased()
-    let key = dictionary + "|" + prefix
-    let completions: [String]
-    if let cached = completionCache[key] {
-      completions = cached
-    } else {
-      let range = NSRange(prefix.startIndex..<prefix.endIndex, in: prefix)
-      completions = (checker.completions(forPartialWordRange: range, in: prefix, language: dictionary) ?? [])
-        .map { $0.lowercased() }
-      if completionCache.count >= 48 { completionCache.removeAll() }
-      completionCache[key] = completions
+    autoreleasepool {
+      let prefix = String(candidate.prefix(2)).lowercased()
+      let key = dictionary + "|" + prefix
+      let completions: [String]
+      if let cached = completionCache[key] {
+        completions = cached
+      } else {
+        let range = NSRange(prefix.startIndex..<prefix.endIndex, in: prefix)
+        completions = (checker.completions(forPartialWordRange: range, in: prefix, language: dictionary) ?? [])
+          .map { $0.lowercased() }
+        if completionCache.count >= 48 { completionCache.removeAll() }
+        completionCache[key] = completions
+      }
+      return completions.firstIndex(of: candidate.lowercased())
     }
-    return completions.firstIndex(of: candidate.lowercased())
   }
 
   /// Respellings of a word a dictionary accepts as typed, that German knows, when the typed
@@ -151,9 +157,11 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     }
     var suggestions: [String] = []
     for dictionary in dictionaries {
-      for candidate in checker.guesses(forWordRange: range, in: word, language: dictionary) ?? []
-      where !suggestions.contains(candidate) && isKnown(candidate, in: dictionary) {
-        suggestions.append(candidate)
+      autoreleasepool {
+        for candidate in checker.guesses(forWordRange: range, in: word, language: dictionary) ?? []
+        where !suggestions.contains(candidate) && isKnown(candidate, in: dictionary) {
+          suggestions.append(candidate)
+        }
       }
     }
     // UITextChecker doesn't always propose swaps or missing/extra letters (`kalppt` →
@@ -219,7 +227,9 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   private func listsLowercase(_ word: String) -> Bool {
     let range = NSRange(word.startIndex..<word.endIndex, in: word)
     return dictionaries.contains { dictionary in
-      (checker.completions(forPartialWordRange: range, in: word, language: dictionary) ?? []).contains(word)
+      autoreleasepool {
+        (checker.completions(forPartialWordRange: range, in: word, language: dictionary) ?? []).contains(word)
+      }
     }
   }
 
@@ -234,9 +244,12 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     let range = NSRange(word.startIndex..<word.endIndex, in: word)
     var germanNoun = false
     for dictionary in dictionaries {
-      let completions = checker.completions(forPartialWordRange: range, in: word, language: dictionary) ?? []
-      if completions.contains(word) { return word }
-      if dictionary == germanDictionary && completions.contains(noun) { germanNoun = true }
+      let listsWord = autoreleasepool { () -> Bool in
+        let completions = checker.completions(forPartialWordRange: range, in: word, language: dictionary) ?? []
+        if dictionary == germanDictionary && completions.contains(noun) { germanNoun = true }
+        return completions.contains(word)
+      }
+      if listsWord { return word }
     }
     return germanNoun ? noun : word
   }
