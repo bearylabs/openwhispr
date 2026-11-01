@@ -361,11 +361,13 @@ private enum KeyboardAutocorrectionTests {
     check("several common slips stay", slip("ot", sentence: [en]) == nil)
     check("no common slip stays", slip("qq") == nil && slip("xv") == nil)
     for kept in ["km", "ca", "zb", "dh", "di", "mo", "sa", "st", "nr", "hm", "na", "on", "mg", "ms",
-                 "dl", "hr", "eg", "mr", "do", "dr", "kb", "et", "Do", "Mr", "Mg"] {
+                 "dl", "hr", "eg", "mr", "do", "dr", "kb", "et", "Do", "Mr", "Mg", "ie", "np", "ka",
+                 "Ka", "Np"] {
       check("kept from slips: \(kept)", slip(kept) == nil && slip(kept, sentence: [de]) == nil
         && slip(kept, sentence: [en]) == nil
-        && KeyboardCorrectionRules.twoLetterSlip(of: kept, sentence: [de], selected: [de]) == nil
-        && (["dh", "di", "mo"].contains(kept)
+        && (["ie", "np", "Np"].contains(kept)
+            || KeyboardCorrectionRules.twoLetterSlip(of: kept, sentence: [de], selected: [de]) == nil)
+        && (["dh", "di", "mo", "ka", "Ka"].contains(kept)
             || KeyboardCorrectionRules.twoLetterSlip(of: kept, sentence: [en], selected: [en]) == nil))
     }
     check("German abbreviations are only German", KeyboardCorrectionRules.twoLetterSlip(
