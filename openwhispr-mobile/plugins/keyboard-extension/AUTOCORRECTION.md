@@ -81,9 +81,13 @@ typed word plus 0.3 per doubling of its frequency rank. The lowest score wins; t
   `funktioniert`, `njxbt` → `nicht`, `wirklixh` → `wirklich`, `hsbd` → `habe` (two slips like
   `hand`, but about three times as common).
 - **Two words for one** (`ichhabe` → `ich habe`): a candidate with one space costs 1 for the
-  missing space plus the edit cost of its two words joined, and ranks as its rarer word. Both
-  words need two letters or more and a frequency rank, so a rare word is never cut in two.
-  UITextChecker's own proposals with a space count under the same rule.
+  missing space plus the edit cost of its two words joined, within the same `maxEditCost`, and
+  ranks as its rarer word. Both words need two letters or more and a frequency rank of at most
+  100 (`maxSplitRank`), and the second word must be lowercase, so a German noun is never split
+  off (`dashaus` stays, even if UITextChecker proposes `das Haus`). UITextChecker's own
+  proposals with a space count only under the same rules, both words known in the dictionary
+  that proposed them. This is a heuristic: two common words can still be split off an unknown
+  compound or name; backspace right after undoes it.
 
 ### Own candidates
 
@@ -96,20 +100,20 @@ rare one with fewer; a level that would pass 1,500 variants is skipped with the 
 it. The space press waits for this, so the search stops after 100 ms and drops the level it
 was in.
 
-Two cheaper searches run first, inside the same 100 ms:
+Two cheaper searches run first, inside the same 100 ms; a search cut short by it gives
+nothing, like a slip level, and the searches after it don't start:
 
 - **Long words** (seven letters or more, `completionPrefixes`): UITextChecker's completions of
   the word's start, from one letter short down to half the word (five letters at least),
-  longest first. Per dictionary, it tries the German respellings first (most pairs replaced,
-  `möglichk` for `moeglichkwitne`) and the word as typed last, four spellings at most. The
-  longest prefix with a completion close enough (`editCost`) wins; after three prefixes that
-  complete only to far-away words it gives up. At most 40 completions per prefix, in Apple's
-  order. This finds long words whose end went wrong, which the slip search can't reach (too
+  longest first (`completionCandidates`). Per dictionary, it tries the German respellings
+  first (most pairs replaced, `möglichk` for `moeglichkwitne`) and the word as typed last, four
+  spellings at most. The longest prefix with a completion close enough (`editCost`) wins; after
+  three prefixes that complete only to far-away words it gives up. At most 40 completions per
+  prefix, in Apple's order. This finds long words whose end went wrong, which the slip search can't reach (too
   many variants) and Apple rarely proposes. A title-case word keeps its capital.
 - **Missing spaces** (`splitCandidates`): every cut into two words of two letters or more
-  that one selected dictionary knows as typed and ranks. A German noun typed in lowercase
-  isn't known as typed, so it never becomes the second word (`dashaus` stays): this keeps
-  unknown compounds whole.
+  that one selected dictionary knows as typed and ranks within `maxSplitRank`. A German noun
+  typed in lowercase isn't known as typed, so it never becomes the second word.
 
 ### German without umlauts, and nouns
 

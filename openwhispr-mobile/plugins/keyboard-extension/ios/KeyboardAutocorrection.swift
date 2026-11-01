@@ -260,15 +260,24 @@ enum KeyboardCorrectionRules {
     return (parts[0], parts[1])
   }
 
-  /// Every way to cut `word` into two words of two letters or more (`ichhabe` → `ich habe`,
-  /// `ic hhabe`, …), as candidates with a space; the provider keeps those both words of which
-  /// it knows.
-  static func splitCandidates(for word: String) -> [String] {
+  /// Both words of a split must be at most this far down the completions of their first two
+  /// letters (`frequencyRank`), i.e. common words; a rarer one is never split off.
+  static let maxSplitRank = 100
+
+  /// Every way to cut `word` into two words of two letters or more (`ichhabe` → `ich habe`)
+  /// that `isCommonSplit` accepts, as candidates with a space. A search cut short by
+  /// `shouldStop` gives nothing, since the cut it didn't reach could be the better one.
+  static func splitCandidates(for word: String, shouldStop: () -> Bool = { false },
+                              isCommonSplit: (_ left: String, _ right: String) -> Bool) -> [String] {
     let characters = Array(word)
     guard characters.count >= 4 else { return [] }
-    return (2...(characters.count - 2)).map {
-      String(characters[..<$0]) + " " + String(characters[$0...])
+    var found: [String] = []
+    for cut in 2...(characters.count - 2) {
+      if shouldStop() { return [] }
+      let left = String(characters[..<cut]), right = String(characters[cut...])
+      if isCommonSplit(left, right) { found.append(left + " " + right) }
     }
+    return shouldStop() ? [] : found
   }
 
   /// Long words whose end went wrong are found among the completions of their start
@@ -278,6 +287,41 @@ enum KeyboardCorrectionRules {
   /// at least. Nothing for words under `minCompletionLength` letters.
   static let minCompletionLength = 7
   static let maxCompletionForms = 4
+  /// At most this many of a prefix's completions are scored, in Apple's order (likeliest first).
+  static let maxCompletions = 40
+  /// Shorter prefixes are tried after this many that completed to nothing close enough.
+  static let maxCompletingPrefixes = 3
+
+  /// Words completing the start of a long word (`completionPrefixes`) that are close enough to
+  /// it (`editCost`) to be scored: per spelling, the longest prefix that completes to one wins.
+  /// `complete` returns a prefix's completions. A title-case word keeps its capital. A search
+  /// cut short by `shouldStop` gives nothing.
+  static func completionCandidates(for word: String, respell: Bool,
+                                   shouldStop: () -> Bool = { false },
+                                   complete: (_ prefix: String) -> [String]) -> [String] {
+    let titleCase = word != word.lowercased()
+    var found: [String] = []
+    for prefixes in completionPrefixes(of: word, respell: respell) {
+      var completing = 0
+      for prefix in prefixes {
+        if shouldStop() { return [] }
+        let completions = complete(prefix)
+        if shouldStop() { return [] }
+        guard !completions.isEmpty else { continue }
+        var matched = false
+        for completion in completions.prefix(maxCompletions) {
+          let candidate = titleCase ? capitalized(completion) : completion
+          guard editCost(from: word, to: candidate) != nil else { continue }
+          matched = true
+          if !found.contains(candidate) { found.append(candidate) }
+        }
+        completing += 1
+        if matched || completing >= maxCompletingPrefixes { break }
+      }
+    }
+    return found
+  }
+
   static func completionPrefixes(of word: String, respell: Bool) -> [[String]] {
     guard word.count >= minCompletionLength else { return [] }
     let respellings = respell
@@ -369,13 +413,19 @@ enum KeyboardCorrectionRules {
     var seen = Set<String>()
     for candidate in suggestions where seen.insert(candidate).inserted {
       if candidate.contains(" ") {
-        // Two words for one typed without its space: both must be known as common words (a
-        // rank), so a rare word is never cut into two. The rarer word's rank counts.
+        // Two words for one typed without its space: both must be common words (ranked within
+        // `maxSplitRank`), so a rare word is never cut off, and the second stays lowercase, so
+        // a German noun is never split off an unknown compound (`dashaus` stays, even when
+        // UITextChecker proposes `das Haus`). The rarer word's rank counts, and the missing
+        // space counts towards the edit budget.
         guard let (left, right) = splitParts(of: candidate, letters: letters),
+              right == right.lowercased(),
               word == word.lowercased() || left != left.lowercased(),
               let leftRank = rank(left), let rightRank = rank(right),
+              max(leftRank, rightRank) <= maxSplitRank,
               let joinedCost = left + right == word
-                ? 0 : editCost(from: word, to: left + right) else { continue }
+                ? 0 : editCost(from: word, to: left + right),
+              joinedCost + splitCost <= maxEditCost(forLength: word.count) + 1e-9 else { continue }
         let candidateScore = score(cost: joinedCost + splitCost, rank: max(leftRank, rightRank))
         if best == nil || (best!.pairs == 0 && candidateScore < best!.score - 1e-9) {
           best = (candidate, candidateScore, 0)

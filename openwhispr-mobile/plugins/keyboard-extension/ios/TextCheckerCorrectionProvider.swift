@@ -160,6 +160,11 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
       autoreleasepool {
         for candidate in checker.guesses(forWordRange: range, in: word, language: dictionary) ?? []
         where !suggestions.contains(candidate) && isKnown(candidate, in: dictionary) {
+          // A proposal with a space (`ich habe`) follows the rule for generated splits.
+          if candidate.contains(" ") {
+            guard let (left, right) = KeyboardCorrectionRules.splitParts(of: candidate, letters: letters),
+                  isCommonSplit(left, right, using: [dictionary]) else { continue }
+          }
           suggestions.append(candidate)
         }
       }
@@ -196,10 +201,12 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     // `möglichk` → `Möglichkeiten`), and two words typed without their space (`ichhabe` →
     // `ich habe`). Both take few lookups, so they run before the slip search can use up the time.
     let completed = completionCandidates(for: word, using: dictionaries, shouldStop: stop)
-    let splits = timedOut ? [] : splitCandidates(for: word, using: dictionaries)
-    let edits = timedOut ? [] : KeyboardCorrectionRules.singleEditCandidates(
+    let splits = stop() ? [] : KeyboardCorrectionRules.splitCandidates(for: word, shouldStop: stop) {
+      self.isCommonSplit($0, $1, using: dictionaries)
+    }
+    let edits = stop() ? [] : KeyboardCorrectionRules.singleEditCandidates(
       for: word, letters: letters, shouldStop: stop, isKnown: known)
-    let slips = timedOut ? [] : KeyboardCorrectionRules.neighborSlipCandidates(
+    let slips = stop() ? [] : KeyboardCorrectionRules.neighborSlipCandidates(
       for: word, maxSlips: KeyboardCorrectionRules.maxNeighborSlips(forLength: word.count),
       shouldStop: stop, isKnown: known)
     var generated = 0
@@ -228,57 +235,33 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     return final.map { [$0] } ?? []
   }
 
-  /// At most this many of a prefix's completions are scored, in Apple's order (likeliest first).
-  static let maxCompletions = 40
-  /// Shorter prefixes are tried after this many that completed to nothing close enough.
-  static let maxCompletingPrefixes = 3
-
-  /// Words completing the start of a long word (`KeyboardCorrectionRules.completionPrefixes`)
-  /// that are close enough to it to be scored: per dictionary and spelling, the longest prefix
-  /// that completes to one wins. A title-case word keeps its capital.
+  /// Words completing the start of a long word in any of `dictionaries`
+  /// (`KeyboardCorrectionRules.completionCandidates`), German ones from its respellings too.
   private func completionCandidates(for word: String, using dictionaries: [String],
                                     shouldStop: () -> Bool) -> [String] {
-    let titleCase = word != word.lowercased()
     var found: [String] = []
     for dictionary in dictionaries {
-      let forms = KeyboardCorrectionRules.completionPrefixes(
-        of: word, respell: dictionary == germanDictionary)
-      for prefixes in forms {
-        var completing = 0
-        for prefix in prefixes {
-          if shouldStop() { return found }
-          let completions = autoreleasepool { () -> [String] in
-            let range = NSRange(prefix.startIndex..<prefix.endIndex, in: prefix)
-            return checker.completions(forPartialWordRange: range, in: prefix, language: dictionary) ?? []
-          }
-          guard !completions.isEmpty else { continue }
-          var matched = false
-          for completion in completions.prefix(Self.maxCompletions) {
-            let candidate = titleCase ? KeyboardCorrectionRules.capitalized(completion) : completion
-            guard KeyboardCorrectionRules.editCost(from: word, to: candidate) != nil else { continue }
-            matched = true
-            if !found.contains(candidate) { found.append(candidate) }
-          }
-          completing += 1
-          if matched || completing >= Self.maxCompletingPrefixes { break }
+      let candidates = KeyboardCorrectionRules.completionCandidates(
+        for: word, respell: dictionary == germanDictionary, shouldStop: shouldStop) { prefix in
+        autoreleasepool {
+          let range = NSRange(prefix.startIndex..<prefix.endIndex, in: prefix)
+          return checker.completions(forPartialWordRange: range, in: prefix, language: dictionary) ?? []
         }
       }
+      if shouldStop() { return [] }
+      found += candidates.filter { !found.contains($0) }
     }
     return found
   }
 
-  /// Two words for a word typed without its space (`ichhabe` → `ich habe`): both known as
-  /// typed in one selected dictionary and common there (a frequency rank). So a German noun typed
-  /// in lowercase never becomes the second word, which keeps unknown compounds whole.
-  private func splitCandidates(for word: String, using dictionaries: [String]) -> [String] {
-    KeyboardCorrectionRules.splitCandidates(for: word).filter { candidate in
-      guard let (left, right) = KeyboardCorrectionRules.splitParts(of: candidate, letters: letters) else {
-        return false
-      }
-      return dictionaries.contains { dictionary in
-        isKnown(left, in: dictionary) && isKnown(right, in: dictionary)
-          && rank(of: left, in: dictionary) != nil && rank(of: right, in: dictionary) != nil
-      }
+  /// Whether `left` and `right` are two words for one typed without its space: both known as
+  /// typed in the same selected dictionary and common there (`maxSplitRank`). So a German noun
+  /// typed in lowercase never becomes the second word, which keeps unknown compounds whole.
+  private func isCommonSplit(_ left: String, _ right: String, using dictionaries: [String]) -> Bool {
+    dictionaries.contains { dictionary in
+      isKnown(left, in: dictionary) && isKnown(right, in: dictionary)
+        && (rank(of: left, in: dictionary).map { $0 <= KeyboardCorrectionRules.maxSplitRank } ?? false)
+        && (rank(of: right, in: dictionary).map { $0 <= KeyboardCorrectionRules.maxSplitRank } ?? false)
     }
   }
 

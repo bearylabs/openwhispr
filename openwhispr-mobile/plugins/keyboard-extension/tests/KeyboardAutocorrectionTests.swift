@@ -279,12 +279,45 @@ private enum KeyboardAutocorrectionTests {
       of: "aeoeueaeoeue", respell: true).count == KeyboardCorrectionRules.maxCompletionForms)
     check("prefixes keep five letters", KeyboardCorrectionRules.completionPrefixes(
       of: "abcdefg", respell: false) == [["abcdef", "abcde"]])
+    let germanCompletions = ["möglichk": ["Möglichkeit", "Möglichkeiten", "Möglichkeitsform"]]
+    var asked: [String] = []
+    let completed = KeyboardCorrectionRules.completionCandidates(
+      for: "moeglichkwitne", respell: true) { prefix in
+      asked.append(prefix)
+      return germanCompletions[prefix] ?? []
+    }
+    check("completions close enough to the word", completed == ["Möglichkeit", "Möglichkeiten"])
+    check("the longest completing prefix wins", !asked.contains("möglich"))
+    check("the word as typed is tried too", asked.contains("moeglichkwitn"))
+    check("completions keep a title-case capital", KeyboardCorrectionRules.completionCandidates(
+      for: "Funktionirt", respell: false) { $0 == "funktioni" || $0 == "Funktioni" ? ["funktioniert"] : [] }
+      == ["Funktioniert"])
+    var completionLookups = 0
+    check("completions cut short give nothing", KeyboardCorrectionRules.completionCandidates(
+      for: "moeglichkwitne", respell: true, shouldStop: { completionLookups >= 3 }) { prefix in
+      completionLookups += 1
+      return germanCompletions[prefix] ?? []
+    }.isEmpty && completionLookups == 3)
+    var farLookups = 0
+    _ = KeyboardCorrectionRules.completionCandidates(for: "abcdefghijkl", respell: false) { _ in
+      farLookups += 1
+      return ["abcdefzzzzzzzzzzzz"]
+    }
+    check("far-away completions stop after a few prefixes",
+          farLookups == KeyboardCorrectionRules.maxCompletingPrefixes)
 
     // Two words typed without their space.
+    var cuts: [String] = []
     check("every cut into words of two letters or more",
-          KeyboardCorrectionRules.splitCandidates(for: "ichhabe")
-            == ["ic hhabe", "ich habe", "ichh abe", "ichha be"])
-    check("too short to cut", KeyboardCorrectionRules.splitCandidates(for: "abc").isEmpty)
+          KeyboardCorrectionRules.splitCandidates(for: "ichhabe") { cuts.append($0 + " " + $1); return true }
+            == ["ic hhabe", "ich habe", "ichh abe", "ichha be"] && cuts.count == 4)
+    check("only accepted cuts", KeyboardCorrectionRules.splitCandidates(for: "ichhabe") {
+      $0 == "ich" && $1 == "habe" } == ["ich habe"])
+    check("too short to cut", KeyboardCorrectionRules.splitCandidates(for: "abc") { _, _ in true }.isEmpty)
+    var splitLookups = 0
+    check("a split search cut short gives nothing", KeyboardCorrectionRules.splitCandidates(
+      for: "ichhabe", shouldStop: { splitLookups >= 2 }) { _, _ in splitLookups += 1; return true }
+      .isEmpty && splitLookups == 2)
     check("split parts", KeyboardCorrectionRules.splitParts(of: "ich habe")! == ("ich", "habe"))
     check("one-letter words are never split off", KeyboardCorrectionRules.splitParts(of: "a cat") == nil)
     check("one space only", KeyboardCorrectionRules.splitParts(of: "ich habe das") == nil)
@@ -292,6 +325,20 @@ private enum KeyboardAutocorrectionTests {
       for: "ichhabe", suggestions: ["ich habe"], rank: { _ in 10 }) == "ich habe")
     check("a split needs both words common", KeyboardCorrectionRules.replacement(
       for: "ichhabe", suggestions: ["ich habe"], rank: { $0 == "ich" ? 1 : nil }) == nil)
+    check("a split at the rank limit", KeyboardCorrectionRules.replacement(
+      for: "ichhabe", suggestions: ["ich habe"],
+      rank: { _ in KeyboardCorrectionRules.maxSplitRank }) == "ich habe")
+    check("a rare word is never split off", KeyboardCorrectionRules.replacement(
+      for: "ichhabe", suggestions: ["ich habe"],
+      rank: { $0 == "ich" ? 1 : KeyboardCorrectionRules.maxSplitRank + 1 }) == nil)
+    check("a noun is never split off a lowercase word", KeyboardCorrectionRules.replacement(
+      for: "dashaus", suggestions: ["das Haus"], rank: { _ in 10 }) == nil)
+    check("a title-case word never gets a capital second word", KeyboardCorrectionRules.replacement(
+      for: "Ichhabe", suggestions: ["Ich Habe"], rank: { _ in 10 }) == nil)
+    check("the missing space counts towards the edit budget", KeyboardCorrectionRules.replacement(
+      for: "abcde", suggestions: ["xy cde"], rank: { _ in 1 }) == nil)
+    check("a split with typos up to the edit budget", KeyboardCorrectionRules.replacement(
+      for: "abcde", suggestions: ["sb cdt"], rank: { _ in 1 }) == "sb cdt")
     check("a split keeps a capital", KeyboardCorrectionRules.replacement(
       for: "Ichhabe", suggestions: ["ich habe", "Ich habe"], rank: { _ in 10 }) == "Ich habe")
     check("a split with a typo", KeyboardCorrectionRules.replacement(
