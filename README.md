@@ -13,7 +13,7 @@ The app branch's `CLAUDE.md` is binding as well.
 
   `type`: `feat fix chore docs refactor perf test ci build`. `topic`: lowercase kebab-case that
   tells a reviewer what changes. One topic per pair.
-- `backup/*`, `pr-assets/*`: storage, never a PR source.
+- `pr-assets/*`: screenshots linked from PR descriptions. Never delete, never a PR source.
 - Once per clone, in a dev-rules checkout: `bash tools/install-guard.sh` (push guard).
 
 ## Workflow
@@ -53,8 +53,10 @@ changing GitHub settings. Pushing `exp/` needs no permission.
 
 ## State
 
-| Feature branch | Upstream PR | Note |
-|---|---|---|
-| `feat/ios-keyboard-autocorrection` | #3039 | `backup/ios-autocorrection-history` tip (3 s backspace undo) may be missing |
-| `fix/mobile-uri-decoder` | #3024 | |
-| `feat/ios-minimal-voice-keyboard` | #3015 | contains headless adaptations; `feat/ios-minimal-keyboard` is the clean version |
+Every upstream PR has its pair; nothing else is kept.
+
+| Upstream PR | Feature branch |
+|---|---|
+| #3039 | `feat/ios-keyboard-autocorrection` |
+| #3024 | `fix/mobile-uri-decoder` |
+| #3015 | `feat/ios-minimal-voice-keyboard` |
