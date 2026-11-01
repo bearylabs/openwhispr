@@ -41,12 +41,22 @@ struct KeyboardCorrectionLanguage: Equatable {
   let code: String
   let dictionaries: [String]
   let letters: Set<Character>
+  /// The language's common two-letter words (and interjections): a two-letter word is swapped
+  /// only into one of these, and never when it is one itself (`na`, `eh` stay).
+  var twoLetterWords: Set<String> = []
 
   private static let latin = Set("abcdefghijklmnopqrstuvwxyz")
   static let german = Self(code: "de", dictionaries: ["de_DE", "de-DE", "de"],
-                           letters: latin.union("äöüß"))
+                           letters: latin.union("äöüß"),
+                           twoLetterWords: ["ab", "ah", "am", "an", "da", "du", "eh", "er", "es", "ha",
+                                            "im", "in", "ja", "je", "na", "ne", "nö", "ob", "oh", "ok",
+                                            "so", "um", "wo", "zu", "äh"])
   static let english = Self(code: "en", dictionaries: ["en_US", "en-US", "en_GB", "en-GB", "en"],
-                            letters: latin)
+                            letters: latin,
+                            twoLetterWords: ["ah", "am", "an", "as", "at", "be", "by", "do", "eh", "go",
+                                             "ha", "he", "hi", "if", "in", "is", "it", "me", "my", "no",
+                                             "of", "oh", "ok", "on", "or", "so", "to", "uh", "um", "up",
+                                             "us", "we"])
   /// Adding a language: an entry here, its code in the app's list, and tests.
   static let all = [german, english]
   static let defaultSelection = [german, english]
@@ -120,9 +130,30 @@ enum KeyboardCorrectionRules {
     return word == word.lowercased() ? swap : capitalized(swap)
   }
 
-  /// A two-letter swap must be among the first this many completions of its first letter, or
-  /// of both its letters: the language's most common words (`im`, `so`, `is`).
-  static let maxSwapRank = 25
+  /// The swap of a two-letter word (`os` → `so`), or nil: the swap must be a common two-letter
+  /// word of a language the sentence may be in (`sentence`), and the typed word none of any
+  /// selected language. A dictionary knowing the typed word doesn't stop it (English knows
+  /// `os`); the lists keep the words people really type (`na`, `eh`, `oh`).
+  static func twoLetterSwap(of word: String, sentence: [KeyboardCorrectionLanguage],
+                            selected: [KeyboardCorrectionLanguage]) -> String? {
+    let typed = word.lowercased(), swap = swapped(typed)
+    guard selected.allSatisfy({ !$0.twoLetterWords.contains(typed) }),
+          sentence.contains(where: { $0.twoLetterWords.contains(swap) }) else { return nil }
+    return swapped(word)
+  }
+
+  /// Keeps `candidates` that aren't words German accepts only as a possible compound
+  /// (`isCompoundLike`, e.g. `Ichhabe` for the typo `Ichhaeb`); for each one that is, its
+  /// common two-word splits (`splits`) take its place (`Ich habe`).
+  static func repairingCompounds(_ candidates: [String], isCompoundLike: (String) -> Bool,
+                                 splits: (String) -> [String]) -> [String] {
+    var result: [String] = []
+    for candidate in candidates {
+      let replacements = isCompoundLike(candidate) ? splits(candidate) : [candidate]
+      for replacement in replacements where !result.contains(replacement) { result.append(replacement) }
+    }
+    return result
+  }
 
   /// German accepts almost any capitalised word as a possible compound noun, so `Ichhabe` and
   /// `Moeglichkwitne` at the start of a sentence pass its misspelling check. Such a word is

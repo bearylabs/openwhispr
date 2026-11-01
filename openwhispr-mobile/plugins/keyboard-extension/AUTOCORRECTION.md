@@ -91,11 +91,13 @@ typed word plus 0.3 per doubling of its frequency rank. The lowest score wins; t
 
 ### Two-letter words
 
-A two-letter word is only ever corrected into its two letters swapped (`isSwappable`): `mi` →
-`im`, `os` → `so`, `si` → `is`, `Mi` → `Im` at a sentence start. The typed word must be unknown
-in the sentence's language (in every selected language when the sentence has none) and its swap
-among the first 25 completions of its first letter or of itself there (`maxSwapRank`), i.e. one
-of the language's most common words. Nothing else is proposed, so `qm` stays.
+A two-letter word is only ever corrected into its two letters swapped (`twoLetterSwap`): `os`
+→ `so`, `mi` → `im`, `si` → `is`, `Os` → `So` at a sentence start. The swap must be one of the
+common two-letter words of the sentence's language (of any selected language when the sentence
+has none; `KeyboardCorrectionLanguage.twoLetterWords`) and known to its dictionary, and the typed
+word none of any selected language's. A dictionary knowing the typed word doesn't stop it
+(English knows `os`); the lists keep what people type (`na`, `eh`, `oh`, `on`, `no`). Nothing else
+is proposed, so `qm` stays.
 
 ### Capitalised words German accepts as compounds
 
@@ -110,7 +112,14 @@ begins like one of the word's respellings up to and including an ä/ö/ü/ß the
 ae/oe/ue/ss (`möglichk…` → `Möglichkeiten`; an unrelated pair is no evidence, so `Feuerwache`
 never becomes `Feuerwächter`). A press that runs out of time while checking this corrects
 nothing. Apple's proposals, single edits
-and slips aren't used for it. A rare compound starting with a pronoun (`Wirsing` → `Wir sing`)
+and slips aren't used for it.
+
+The same check runs on candidates for an ordinary typo: a candidate German accepts only as a
+possible compound (`Ichhabe`, a swap away from `Ichhaeb`, or `ichhabe` read as a noun) is no
+word, so its common two-word splits take its place (`Ich habe`, `ich habe`;
+`repairingCompounds`), and Apple's proposals and the word's own capital that are only that are
+dropped. Out of time, only lowercase candidates stay, since the check may not have reached a
+capitalised one. A rare compound starting with a pronoun (`Wirsing` → `Wir sing`)
 or spelled with ae/oe/ue can still be corrected wrongly; backspace right after undoes it.
 
 ### Own candidates
@@ -254,8 +263,8 @@ npm test -- --runInBand
    `das ist woe` → `wie`; `this is woe` and `das ist cool` stay. `moeglichkwitne` →
    `Möglichkeiten`, `ichhabe` → `ich habe` (backspace → `ichhabe`); `dashaus` stays.
    At a sentence start, `Ichhabe` → `Ich habe` and `Moeglichkwitne` → `Möglichkeiten`;
-   `Donaudampfschiff` stays. `mi`, `os`, `Mi` → `im`, `so`, `Im`; `qm`, `am`, `is` (in English)
-   stay.
+   `Donaudampfschiff` stays. `Ichhaeb` → `Ich habe`, `ichhaeb` → `ich habe`. `os`, `mi`, `Os` → `so`, `im`, `So`;
+   `qm`, `am`, `na`, `on` stay.
 4. Notes, Messages and a Safari text area, with fast typing: no correction is better than one in
    the wrong place. Move the cursor, select text, switch fields, apps and keyboards: no stale
    replacement.

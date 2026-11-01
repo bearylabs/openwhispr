@@ -332,6 +332,20 @@ private enum KeyboardAutocorrectionTests {
     check("digits aren't swappable", !KeyboardCorrectionRules.isSwappable("a1"))
     check("umlauts only with German", KeyboardCorrectionRules.isSwappable("üb")
       && !KeyboardCorrectionRules.isSwappable("üb", letters: KeyboardCorrectionLanguage.letters(of: [.english])))
+    let de = KeyboardCorrectionLanguage.german, en = KeyboardCorrectionLanguage.english
+    func swap(_ word: String, sentence: [KeyboardCorrectionLanguage] = [.german, .english]) -> String? {
+      KeyboardCorrectionRules.twoLetterSwap(of: word, sentence: sentence, selected: [de, en])
+    }
+    check("os becomes so, though English knows os", swap("os") == "so")
+    check("a sentence-start swap keeps its capital", swap("Os") == "So" && swap("Mi") == "Im")
+    check("si becomes is in English", swap("si", sentence: [en]) == "is")
+    check("si stays in a German sentence", swap("si", sentence: [de]) == nil)
+    check("a common two-letter word is never swapped",
+          swap("na") == nil && swap("eh") == nil && swap("on") == nil && swap("no") == nil)
+    check("no common swap, no correction", swap("qm") == nil && swap("xy") == nil)
+    check("every two-letter word is lowercase and two letters",
+          KeyboardCorrectionLanguage.all.allSatisfy { $0.twoLetterWords.allSatisfy {
+            $0.count == 2 && $0 == $0.lowercased() } })
     var (swapState, swapContext) = typed("mi", prefix: "ich bin ", document: document)
     check("a two-letter word is tracked and swapped", swapState.correction(
       in: swapContext, provider: StubProvider(words: ["im"]))?.replacement == "im")
@@ -380,6 +394,21 @@ private enum KeyboardAutocorrectionTests {
       "Mäglichkeit", of: "Moeglichkwitne"))
     check("ss for ß is evidence too", KeyboardCorrectionRules.isCompoundCorrection(
       "Großartigkeit", of: "Grossartigkiet"))
+
+    // Candidates German accepts only as possible compounds are replaced by their splits.
+    let compoundWords: Set<String> = ["Ichhabe", "Haben"]
+    check("a compound-like candidate is replaced by its split", KeyboardCorrectionRules.repairingCompounds(
+      ["Ichhabe", "Ichhaben"], isCompoundLike: { $0 == "Ichhabe" },
+      splits: { $0 == "Ichhabe" ? ["Ich habe"] : [] }) == ["Ich habe", "Ichhaben"])
+    check("a compound-like candidate without a split is dropped", KeyboardCorrectionRules.repairingCompounds(
+      ["Haben", "Hagen"], isCompoundLike: { compoundWords.contains($0) }, splits: { _ in [] }) == ["Hagen"])
+    check("repaired splits stay unique", KeyboardCorrectionRules.repairingCompounds(
+      ["Ichhabe", "Ich habe"], isCompoundLike: { $0 == "Ichhabe" }, splits: { _ in ["Ich habe"] })
+      == ["Ich habe"])
+    check("a swapped compound typo becomes its split", KeyboardCorrectionRules.replacement(
+      for: "Ichhaeb", suggestions: ["Ich habe"], rank: { _ in 5 }) == "Ich habe")
+    check("a lowercase swapped compound typo becomes its split", KeyboardCorrectionRules.replacement(
+      for: "ichhaeb", suggestions: ["ich habe"], rank: { _ in 5 }) == "ich habe")
 
     // Two words typed without their space.
     var cuts: [String] = []

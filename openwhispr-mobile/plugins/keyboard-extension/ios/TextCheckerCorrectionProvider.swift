@@ -155,43 +155,30 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   /// in that language and isn't corrected by another language's sentence.
   static let commonRank = 25
 
-  /// Two swapped letters (`mi` → `im`, `os` → `so`): the typed word unknown in the sentence's
-  /// language (every selected one when the sentence has none) and its swap a known, very common
-  /// word there (`maxSwapRank`). Nothing else is ever proposed for a two-letter word.
+  /// Two swapped letters (`mi` → `im`, `os` → `so`), by the languages' common two-letter
+  /// words (`KeyboardCorrectionRules.twoLetterSwap`): into one of the sentence's language (of
+  /// any selected one when the sentence has none), and the swap a known word there. Nothing
+  /// else is ever proposed for a two-letter word.
   private func swapSuggestions(for word: String, before: String) -> [String] {
-    guard !dictionaries.isEmpty else { return [] }
+    let installed = languages.filter { resolvedCodes.contains($0.code) }
+    guard !installed.isEmpty else { return [] }
     let byCode = Dictionary(uniqueKeysWithValues: zip(resolvedCodes, dictionaries))
-    let sentence = languages.count > 1 && !before.isEmpty
+    let code = installed.count > 1 && !before.isEmpty
       ? KeyboardCorrectionRules.sentenceLanguage(
           before: before, codes: resolvedCodes,
           knows: { word, code in !self.stop() && (byCode[code].map { self.isKnown(word, in: $0) } ?? false) })
-        .flatMap { byCode[$0] }
       : nil
     guard !stop() else { return [] }
-    let checked = sentence.map { [$0] } ?? dictionaries
-    let typed = word.lowercased()
-    let swap = KeyboardCorrectionRules.swapped(typed)
-    guard checked.allSatisfy({ !stop() && !isKnown(typed, in: $0) }),
-          checked.contains(where: { !stop() && isKnown(swap, in: $0) && isCommonShortWord(swap, in: $0) }),
+    let sentence = code.map { code in installed.filter { $0.code == code } } ?? installed
+    guard let swap = KeyboardCorrectionRules.twoLetterSwap(of: word, sentence: sentence, selected: installed),
+          sentence.contains(where: { language in
+            !stop() && byCode[language.code].map { isKnown(swap.lowercased(), in: $0) } == true }),
           !stop() else {
-      log.info("Autocorrection swap skipped: sentenceLanguage=\(sentence != nil, privacy: .public)")
+      log.info("Autocorrection swap skipped: sentenceLanguage=\(code != nil, privacy: .public)")
       return []
     }
-    log.info("Autocorrection swap: sentenceLanguage=\(sentence != nil, privacy: .public)")
-    return [KeyboardCorrectionRules.swapped(word)]
-  }
-
-  /// Whether a short word is among the first `maxSwapRank` completions of its first letter or
-  /// of all of it (Apple may leave the word itself out of its own completions).
-  private func isCommonShortWord(_ word: String, in dictionary: String) -> Bool {
-    autoreleasepool {
-      [String(word.prefix(1)), word].contains { prefix in
-        guard !stop() else { return false }
-        let range = NSRange(prefix.startIndex..<prefix.endIndex, in: prefix)
-        let completions = checker.completions(forPartialWordRange: range, in: prefix, language: dictionary) ?? []
-        return completions.prefix(KeyboardCorrectionRules.maxSwapRank).contains { $0.lowercased() == word }
-      }
-    }
+    log.info("Autocorrection swap: sentenceLanguage=\(code != nil, privacy: .public)")
+    return [swap]
   }
 
   private func suggestions(for word: String, using dictionaries: [String]) -> [String] {
@@ -317,9 +304,43 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
         if accepted { compoundCandidates.append(candidate) }
       }
     }
-    let candidates = compound
-      ? compoundCandidates
-      : ownCapital + respellings + completed + splits + (edits + slips).map(caseFixed)
+    // A candidate German accepts only as a possible compound is no word (`Ichhabe`, from a swap
+    // in `Ichhaeb`, or `ichhabe` read as a noun); its common splits replace it (`Ich habe`),
+    // after the search, within the same time.
+    let isCompoundLike: (String) -> Bool = { candidate in
+      !isOver() && self.acceptedOnlyAsCompound(candidate, in: dictionaries)
+    }
+    let repairSplits: (String) -> [String] = { candidate in
+      isOver() ? [] : KeyboardCorrectionRules.splitCandidates(for: candidate, shouldStop: isOver) {
+        isCommonSplit($0, $1, dictionaries)
+      }
+    }
+    // A lowercase variant whose noun capital is only a possible compound (`ichhabe` for
+    // `Ichhabe`) is split as typed, not as the noun.
+    var lowercaseCompounds = Set<String>()
+    let variants = compound ? [] : (edits + slips).map { variant -> String in
+      let fixed = caseFixed(variant)
+      guard fixed != variant, isCompoundLike(fixed) else { return fixed }
+      lowercaseCompounds.insert(variant)
+      return variant
+    }
+    var repaired = compound ? [] : KeyboardCorrectionRules.repairingCompounds(
+      respellings + completed + variants,
+      isCompoundLike: { lowercaseCompounds.contains($0) || isCompoundLike($0) },
+      splits: repairSplits)
+    // Apple's own proposals and the word's own capital are dropped when they are only that.
+    var ownNoun = compound ? [] : ownCapital.filter { !isCompoundLike($0) }
+    if !compound { suggestions = suggestions.filter { !isCompoundLike($0) } }
+    // Out of time, a capitalised candidate may not have been checked: only lowercase ones stay
+    // (the compound check only ever rejects capitalised words), so a cut-short slip search
+    // still corrects `fubktiojiert`.
+    if isOver() {
+      let checked: (String) -> Bool = { $0 == $0.lowercased() }
+      repaired = repaired.filter(checked)
+      ownNoun = []
+      suggestions = suggestions.filter(checked)
+    }
+    let candidates = compound ? compoundCandidates : ownNoun + splits + repaired
     for candidate in candidates
     where !suggestions.contains(candidate) {
       suggestions.append(candidate)
