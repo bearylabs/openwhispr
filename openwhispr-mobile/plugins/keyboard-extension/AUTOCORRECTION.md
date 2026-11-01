@@ -107,8 +107,6 @@ one without a sentence language, so `ia` at a sentence start stays, being `is` o
 word must be in no list and unknown to every selected dictionary (`km`, `ca`, `zb`, `nr` stay,
 and are kept in the lists too). Nothing else is proposed for a two-letter word.
 
-
-
 ### Capitalised words German accepts as compounds
 
 German's dictionary accepts almost any capitalised word as a possible compound noun, so
