@@ -298,6 +298,17 @@ private enum KeyboardAutocorrectionTests {
       completionLookups += 1
       return germanCompletions[prefix] ?? []
     }.isEmpty && completionLookups == 3)
+    // The deadline passes while the second completion is scored (the third check after the lookup).
+    var checksSinceLookup = -1
+    check("completions stop during scoring", KeyboardCorrectionRules.completionCandidates(
+      for: "Funktionirt", respell: false, shouldStop: {
+        if checksSinceLookup >= 0 { checksSinceLookup += 1 }
+        return checksSinceLookup >= 3
+      }) { prefix in
+      guard prefix == "Funktioni" else { return [] }
+      checksSinceLookup = 0
+      return ["funktioniert", "funktionieren"]
+    }.isEmpty)
     var farLookups = 0
     _ = KeyboardCorrectionRules.completionCandidates(for: "abcdefghijkl", respell: false) { _ in
       farLookups += 1
@@ -314,6 +325,31 @@ private enum KeyboardAutocorrectionTests {
     check("only accepted cuts", KeyboardCorrectionRules.splitCandidates(for: "ichhabe") {
       $0 == "ich" && $1 == "habe" } == ["ich habe"])
     check("too short to cut", KeyboardCorrectionRules.splitCandidates(for: "abc") { _, _ in true }.isEmpty)
+    // Split words: both known and ranked in one dictionary, with the deadline before each lookup.
+    let splitWords = ["de": ["ich": 3, "habe": 8, "rar": 400], "en": ["ich": 900, "have": 4]]
+    func commonSplit(_ left: String, _ right: String, _ dictionaries: [String] = ["de", "en"],
+                     stopAfter: Int = .max, lookups: inout [String]) -> Bool {
+      var log: [String] = []
+      defer { lookups = log }
+      return KeyboardCorrectionRules.isCommonSplit(
+        left, right, in: dictionaries, shouldStop: { log.count >= stopAfter },
+        isKnown: { word, dictionary in log.append("known \(word) \(dictionary)")
+          return splitWords[dictionary]?[word] != nil },
+        rank: { word, dictionary in log.append("rank \(word) \(dictionary)")
+          return splitWords[dictionary]?[word] })
+    }
+    var splitLog: [String] = []
+    check("a common split", commonSplit("ich", "habe", lookups: &splitLog) && splitLog.count == 4)
+    check("both words in the same dictionary", !commonSplit("ich", "have", lookups: &splitLog))
+    check("a rare word is no split", !commonSplit("ich", "rar", lookups: &splitLog))
+    check("another dictionary may know the split", commonSplit("ich", "habe", ["en", "de"], lookups: &splitLog))
+    check("a split check stops at the deadline",
+          !commonSplit("ich", "habe", stopAfter: 1, lookups: &splitLog) && splitLog == ["known ich de"])
+    check("no further dictionary after the deadline",
+          !commonSplit("ich", "habe", ["en", "de"], stopAfter: 2, lookups: &splitLog)
+            && splitLog == ["known ich en", "known habe en"])
+    check("a split found as the deadline passes gives nothing",
+          !commonSplit("ich", "habe", stopAfter: 4, lookups: &splitLog) && splitLog.count == 4)
     var splitLookups = 0
     check("a split search cut short gives nothing", KeyboardCorrectionRules.splitCandidates(
       for: "ichhabe", shouldStop: { splitLookups >= 2 }) { _, _ in splitLookups += 1; return true }

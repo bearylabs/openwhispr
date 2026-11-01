@@ -280,6 +280,25 @@ enum KeyboardCorrectionRules {
     return shouldStop() ? [] : found
   }
 
+  /// Whether `left` and `right` are two words for one typed without its space: both known as
+  /// typed in the same dictionary and ranked there within `maxSplitRank`. Checks the deadline
+  /// before each lookup and answers false once it has passed.
+  static func isCommonSplit<Language>(
+    _ left: String, _ right: String, in dictionaries: [Language],
+    shouldStop: () -> Bool = { false },
+    isKnown: (_ word: String, _ dictionary: Language) -> Bool,
+    rank: (_ word: String, _ dictionary: Language) -> Int?
+  ) -> Bool {
+    for dictionary in dictionaries {
+      if shouldStop() { return false }
+      guard isKnown(left, dictionary), !shouldStop(), isKnown(right, dictionary), !shouldStop(),
+            (rank(left, dictionary).map { $0 <= maxSplitRank } ?? false), !shouldStop(),
+            (rank(right, dictionary).map { $0 <= maxSplitRank } ?? false) else { continue }
+      return !shouldStop()
+    }
+    return false
+  }
+
   /// Long words whose end went wrong are found among the completions of their start
   /// (`möglichk` → `Möglichkeiten`). The prefixes to try, longest first, for the word as typed
   /// and, before it, its German respellings (most pairs replaced first; `maxCompletionForms`
@@ -310,6 +329,7 @@ enum KeyboardCorrectionRules {
         guard !completions.isEmpty else { continue }
         var matched = false
         for completion in completions.prefix(maxCompletions) {
+          if shouldStop() { return [] }
           let candidate = titleCase ? capitalized(completion) : completion
           guard editCost(from: word, to: candidate) != nil else { continue }
           matched = true
@@ -319,7 +339,7 @@ enum KeyboardCorrectionRules {
         if matched || completing >= maxCompletingPrefixes { break }
       }
     }
-    return found
+    return shouldStop() ? [] : found
   }
 
   static func completionPrefixes(of word: String, respell: Bool) -> [[String]] {

@@ -156,16 +156,18 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
       return final != word ? [final] : []
     }
     var suggestions: [String] = []
+    // Proposals with a space (`ich habe`), with the dictionary that made them; checked like
+    // generated splits once the deadline below runs.
+    var spacedGuesses: [(candidate: String, dictionary: String)] = []
     for dictionary in dictionaries {
       autoreleasepool {
         for candidate in checker.guesses(forWordRange: range, in: word, language: dictionary) ?? []
         where !suggestions.contains(candidate) && isKnown(candidate, in: dictionary) {
-          // A proposal with a space (`ich habe`) follows the rule for generated splits.
           if candidate.contains(" ") {
-            guard let (left, right) = KeyboardCorrectionRules.splitParts(of: candidate, letters: letters),
-                  isCommonSplit(left, right, using: [dictionary]) else { continue }
+            spacedGuesses.append((candidate, dictionary))
+          } else {
+            suggestions.append(candidate)
           }
-          suggestions.append(candidate)
         }
       }
     }
@@ -201,9 +203,24 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     // `möglichk` → `Möglichkeiten`), and two words typed without their space (`ichhabe` →
     // `ich habe`). Both take few lookups, so they run before the slip search can use up the time.
     let completed = completionCandidates(for: word, using: dictionaries, shouldStop: stop)
-    let splits = stop() ? [] : KeyboardCorrectionRules.splitCandidates(for: word, shouldStop: stop) {
-      self.isCommonSplit($0, $1, using: dictionaries)
+    let isCommonSplit: (String, String, [String]) -> Bool = { left, right, dictionaries in
+      KeyboardCorrectionRules.isCommonSplit(
+        left, right, in: dictionaries, shouldStop: stop,
+        isKnown: { self.isKnown($0, in: $1) }, rank: { self.rank(of: $0, in: $1) })
     }
+    // Apple's proposals with a space follow the rule for generated splits, in the dictionary
+    // that proposed them; all are dropped when the deadline passes while checking them.
+    var spaced = spacedGuesses.filter { guess in
+      guard let (left, right) = KeyboardCorrectionRules.splitParts(of: guess.candidate, letters: letters) else {
+        return false
+      }
+      return isCommonSplit(left, right, [guess.dictionary])
+    }.map { $0.candidate }
+    if stop() { spaced = [] }
+    let generatedSplits = stop() ? [] : KeyboardCorrectionRules.splitCandidates(for: word, shouldStop: stop) {
+      isCommonSplit($0, $1, dictionaries)
+    }
+    let splits = spaced + generatedSplits.filter { !spaced.contains($0) }
     let edits = stop() ? [] : KeyboardCorrectionRules.singleEditCandidates(
       for: word, letters: letters, shouldStop: stop, isKnown: known)
     let slips = stop() ? [] : KeyboardCorrectionRules.neighborSlipCandidates(
@@ -252,17 +269,6 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
       found += candidates.filter { !found.contains($0) }
     }
     return found
-  }
-
-  /// Whether `left` and `right` are two words for one typed without its space: both known as
-  /// typed in the same selected dictionary and common there (`maxSplitRank`). So a German noun
-  /// typed in lowercase never becomes the second word, which keeps unknown compounds whole.
-  private func isCommonSplit(_ left: String, _ right: String, using dictionaries: [String]) -> Bool {
-    dictionaries.contains { dictionary in
-      isKnown(left, in: dictionary) && isKnown(right, in: dictionary)
-        && (rank(of: left, in: dictionary).map { $0 <= KeyboardCorrectionRules.maxSplitRank } ?? false)
-        && (rank(of: right, in: dictionary).map { $0 <= KeyboardCorrectionRules.maxSplitRank } ?? false)
-    }
   }
 
   /// Whether any selected dictionary's completions list `word` exactly in lowercase.

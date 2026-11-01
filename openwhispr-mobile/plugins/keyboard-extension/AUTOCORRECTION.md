@@ -100,8 +100,10 @@ rare one with fewer; a level that would pass 1,500 variants is skipped with the 
 it. The space press waits for this, so the search stops after 100 ms and drops the level it
 was in.
 
-Two cheaper searches run first, inside the same 100 ms; a search cut short by it gives
-nothing, like a slip level, and the searches after it don't start:
+Two cheaper searches run first, inside the same 100 ms, which is checked before every
+dictionary lookup and every scored completion; a search cut short by it gives nothing, like a
+slip level, and the searches after it don't start. UITextChecker's proposals with a space are
+checked against the split rules within the same 100 ms too:
 
 - **Long words** (seven letters or more, `completionPrefixes`): UITextChecker's completions of
   the word's start, from one letter short down to half the word (five letters at least),
@@ -112,7 +114,7 @@ nothing, like a slip level, and the searches after it don't start:
   prefix, in Apple's order. This finds long words whose end went wrong, which the slip search can't reach (too
   many variants) and Apple rarely proposes. A title-case word keeps its capital.
 - **Missing spaces** (`splitCandidates`): every cut into two words of two letters or more
-  that one selected dictionary knows as typed and ranks within `maxSplitRank`. A German noun
+  that one selected dictionary knows as typed and ranks within `maxSplitRank` (`isCommonSplit`). A German noun
   typed in lowercase isn't known as typed, so it never becomes the second word.
 
 ### German without umlauts, and nouns
