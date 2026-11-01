@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # openwhispr-fork-guard-v2
-# Local mirror of the fork's branch rules (RULES.md). GitHub's ruleset enforces them too.
+# Local mirror of the fork's branch rules (README.md). GitHub's ruleset enforces them too.
 set -euo pipefail
 remote=${1:?}
 url=${2:?}

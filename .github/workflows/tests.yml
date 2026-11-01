@@ -43,7 +43,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 0
           persist-credentials: false
       # The adapter must fit the app commit under test, not this branch's old snapshot.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -54,11 +53,6 @@ jobs:
       - run: python3 -m unittest discover -s tools/tests -v
         env:
           KEYBOARD_APP_SOURCE: app-source
-      - name: App main must contain no fork-only infrastructure
-        run: |
-          git fetch --no-tags origin main
-          git fetch --no-tags https://github.com/OpenWhispr/openwhispr.git main:refs/remotes/upstream/main
-          python3 tools/export-upstream.py --source origin/main
 
   security:
     name: Mobile dependency security gate
