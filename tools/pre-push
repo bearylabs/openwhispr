@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# openwhispr-tests-guard-v1
+# Branch safety only. Test changes and PR scope are reviewed manually.
+set -euo pipefail
+remote=${1:?}
+url=${2:?}
+case "$url" in
+  *github.com[:/][Oo]pen[Ww]hispr/openwhispr*)
+    echo 'REFUSED: push to your fork, then open an upstream PR; direct upstream pushes are disabled.' >&2
+    exit 1 ;;
+esac
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ "$local_sha" != 0000000000000000000000000000000000000000 ]] || continue
+  if [[ "$remote_ref" == refs/heads/main ]]; then
+    if [[ "$local_sha" != "$(git rev-parse upstream/main)" ]]; then
+      echo 'REFUSED: fork main must equal the fetched upstream/main.' >&2
+      exit 1
+    fi
+  fi
+done

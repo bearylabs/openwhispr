@@ -1,0 +1,104 @@
+diff --git a/openwhispr-mobile/plugins/keyboard-extension/ios/KeyboardViewController.swift b/openwhispr-mobile/plugins/keyboard-extension/ios/KeyboardViewController.swift
+index 6550a34c2..89a857b8c 100644
+--- a/openwhispr-mobile/plugins/keyboard-extension/ios/KeyboardViewController.swift
++++ b/openwhispr-mobile/plugins/keyboard-extension/ios/KeyboardViewController.swift
+@@ -2548,9 +2548,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
+       let button = UIButton(type: .system)
+       button.setTitle(item.title, for: .normal)
+       button.addAction(UIAction { [weak self] _ in
+-        KeyboardHandoffProvider.shared.setTone(item.value)
+-        self?.closeCompactToneMenu()
+-        self?.refreshToneButton()
++        self?.selectCompactTone(item.value)
+       }, for: .touchUpInside)
+       compactToneMenu.addArrangedSubview(button)
+       return (item.value, button)
+@@ -2570,6 +2568,12 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
+     }
+   }
+ 
++  private func selectCompactTone(_ tone: String) {
++    KeyboardHandoffProvider.shared.setTone(tone)
++    closeCompactToneMenu()
++    refreshToneButton()
++  }
++
+   private func closeCompactToneMenu() {
+     isCompactToneMenuShown = false
+     compactToneMenu.isHidden = true
+diff --git a/openwhispr-mobile/plugins/keyboard-extension/tests/KeyboardTouchTests.swift b/openwhispr-mobile/plugins/keyboard-extension/tests/KeyboardTouchTests.swift
+index 7ba61ae1b..58ada3366 100644
+--- a/openwhispr-mobile/plugins/keyboard-extension/tests/KeyboardTouchTests.swift
++++ b/openwhispr-mobile/plugins/keyboard-extension/tests/KeyboardTouchTests.swift
+@@ -10,7 +10,8 @@ private enum TestEnvironment {
+   /// A compact vertical size class: a phone in landscape.
+   static var landscape = false
+   static var tablet = false
+-  static var fullAccess = false
++  // Layout/hit tests exercise the typing UI, not the permissions overlay.
++  static var fullAccess = true
+   static var proxy = TestTextProxy()
+ 
+   static func install() {
+@@ -37,7 +38,7 @@ private enum TestEnvironment {
+     globe = false
+     landscape = false
+     tablet = false
+-    fullAccess = false
++    fullAccess = true
+     proxy = TestTextProxy()
+   }
+ }
+@@ -196,7 +197,12 @@ private extension KeyboardViewController {
+     checks.check("ending recording restores compact height",
+       controller.keyboardHeightConstraint?.constant == compactHeight)
+ 
+-    controller.toneButton.sendActions(for: .touchUpInside)
++    // The headless Catalyst runner has no UIApplication event dispatch.
++    // Verify the wiring, then call the same handler directly.
++    checks.check("tone button is wired to compact menu handler",
++      controller.toneButton.actions(forTarget: controller, forControlEvent: .touchUpInside)?
++        .contains("handleCompactToneTapped") == true)
++    controller.handleCompactToneTapped()
+     layout()
+     checks.check("tone menu expands minimal keyboard",
+       controller.view.bounds.height == compactHeight + Self.compactToneMenuHeight
+@@ -206,7 +212,7 @@ private extension KeyboardViewController {
+     checks.check("compact menu offers the formal tone", formal != nil)
+     if let formal {
+       checkTappable("formal tone", formal)
+-      formal.sendActions(for: .touchUpInside)
++      controller.selectCompactTone("formal")
+     }
+     layout()
+     checks.check("tone selection persists to App Group",
+@@ -218,13 +224,13 @@ private extension KeyboardViewController {
+     checks.check("tone selection collapses keyboard",
+       controller.view.bounds.height == compactHeight && controller.compactToneMenu.isHidden)
+ 
+-    controller.toneButton.sendActions(for: .touchUpInside)
+-    controller.toneButton.sendActions(for: .touchUpInside)
++    controller.handleCompactToneTapped()
++    controller.handleCompactToneTapped()
+     layout()
+     checks.check("tapping tone icon again collapses keyboard",
+       controller.view.bounds.height == compactHeight && controller.compactToneMenu.isHidden)
+ 
+-    controller.toneButton.sendActions(for: .touchUpInside)
++    controller.handleCompactToneTapped()
+     controller.viewWillDisappear(false)
+     // The same preference refresh runs when this controller reappears.
+     controller.refreshMinimalKeyboardPreference()
+diff --git a/openwhispr-mobile/plugins/keyboard-extension/tests/run-keyboard-touch-tests.py b/openwhispr-mobile/plugins/keyboard-extension/tests/run-keyboard-touch-tests.py
+index 90b6f5d68..d264eb352 100644
+--- a/openwhispr-mobile/plugins/keyboard-extension/tests/run-keyboard-touch-tests.py
++++ b/openwhispr-mobile/plugins/keyboard-extension/tests/run-keyboard-touch-tests.py
+@@ -36,7 +36,7 @@ def main():
+         )
+         executable = str(Path(directory) / "keyboard-touch-tests")
+         subprocess.run([
+-            "xcrun", "--sdk", "macosx", "swiftc", "-swift-version", "5", "-parse-as-library",
++            "xcrun", "--sdk", "macosx", "swiftc", "-O", "-swift-version", "5", "-parse-as-library",
+             "-sdk", sdk,
+             "-target", f"{platform.machine()}-apple-ios{DEPLOYMENT_TARGET}-macabi",
+             "-Fsystem", f"{sdk}/System/iOSSupport/System/Library/Frameworks",
