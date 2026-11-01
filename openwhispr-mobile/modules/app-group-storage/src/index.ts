@@ -296,6 +296,9 @@ export const APP_GROUP_KEYS = {
   // App → keyboard: the languages it corrects, as "de,en". Missing, empty or unknown-only
   // (or an unreadable container) means German and English.
   KEYBOARD_AUTOCORRECTION_LANGUAGES: 'keyboard_autocorrection_languages',
+  // App → keyboard: the dictionary's words, which autocorrection never corrects away and may
+  // correct a typo into (`src/lib/keyboardAutocorrectionWords.ts`); empty while it is off.
+  KEYBOARD_AUTOCORRECTION_WORDS: 'keyboard_autocorrection_words',
   BACKGROUND_SESSION_READY: 'background_session_ready',
   // Hotkey dictation: "<pid>:<ms>", stamped by markHotkeyJsReady once
   // useKeyboardHandoff's recording listeners are subscribed; the hotkey's cold

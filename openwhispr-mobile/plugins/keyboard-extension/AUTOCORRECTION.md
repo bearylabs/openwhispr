@@ -1,8 +1,8 @@
 # Keyboard autocorrection
 
 The keyboard corrects a word the user typed by hand when they tap space, `?`, `!`, `.` or `,`. It is on by default
-and works on the device only: public `UITextChecker` APIs, no network, no learned dictionary,
-and no typed text in logs.
+and works on the device only: public `UITextChecker` APIs and the app's dictionary (below), no
+network, and no typed text in logs.
 
 ## Settings
 
@@ -22,7 +22,42 @@ least one and at most three. The Preferences row shows the selection, or "Off".
   under a tight memory limit; the next correction attempt (space or punctuation) creates it
   again. Dictionary lookups run in local `autoreleasepool` scopes to bound temporaries.
 - Correction needs no Full Access, but without it the keyboard can't read the App Group, so it
-  corrects German and English whatever the app says.
+  corrects German and English whatever the app says, without the app's dictionary.
+
+## The app's dictionary
+
+The dictionary (Dictionary tab: words the user added, words OpenWhispr learned when they
+corrected a dictation, and the shared team words that apply, as dictation uses them) also guides
+autocorrection.
+
+- The app mirrors it to the App Group as `keyboard_autocorrection_words`,
+  `{"v":1,"personal":[…],"shared":[…]}` (`src/lib/keyboardAutocorrectionWords.ts`,
+  `buildDictationHintTiers(false)`: no snippet triggers, hidden shared words left out), on start
+  and on every change of the dictionary, the shared words or the config. Entries are NFC, trimmed,
+  without controls, invisible characters or any spacing but single spaces, at most 64 UTF-16
+  units (a longer one is skipped), deduplicated case-insensitively with personal words first, and
+  capped at 2,000 entries and 64 KiB, so team words go first. A failed write is retried on the
+  next change and at the next start. While autocorrection is off the value is empty.
+- Sign-out and an account switch empty the value before the stores reset and keep it empty until
+  both have (`clearingKeyboardWords` in `syncEngine.ts`), so no mix of the two accounts' words is
+  ever written.
+- The keyboard reads it at every correction, only with Full Access, and parses it again only when
+  it changed (`KeyboardUserDictionary`, which enforces the bounds again and drops it with the text
+  checker on a memory warning or when the keyboard disappears).
+- **Protected words.** A word typed in any case that is in the dictionary, or a word of a phrase
+  of up to four words in it, is never corrected: no swap, slip, respelling or capital (`Hrudek`,
+  `kubectl`, `os` in a team list). Entries with digits or punctuation (`GPT-6`, addresses)
+  protect nothing. An exact word keeps the case it was typed in.
+- **The user's words as corrections.** A word every selected dictionary flags may become one of
+  the user's own words (personal, never shared): 4 to 20 precomposed letters whose lowercase and
+  capital are single letters, not all capitals, one plausible mistake away (edit cost at most
+  1.5: a swap, a missing or extra letter, a key beside the right one, a letter for its umlaut, or
+  ae/oe/ue/ss), and no other of their words as close (`openwhsipr` → `OpenWhispr`, `Hrudke` →
+  `Hrudek`, `kubectk` → `kubectl`, `Kubectk` → `Kubectl`). It is typed as stored, capitalised
+  when the typed word was. It replaces the ordinary pick only when strictly closer to the typed
+  word (a split counts its missing space), and never a German respelling (`strasse` → `Straße`).
+  The scan shares the press's 100 ms; cut short, it gives nothing. An accent the user left out
+  costs like any other letter, so `Sinead` doesn't become `Sinéad`.
 
 ### Adding a language
 
@@ -244,7 +279,8 @@ python3 plugins/keyboard-extension/tests/run-keyboard-touch-tests.py
 npm test -- --runInBand
 ```
 
-- `tests/KeyboardAutocorrectionTests.swift`: language selection, sentence language, scoring,
+- `tests/KeyboardAutocorrectionTests.swift`: the app's dictionary (parsing, bounds, protection,
+  targets, ties, the competition with the ordinary pick and the state machine's edit), language selection, sentence language, scoring,
   key neighbours, generated candidates, respellings, completion prefixes, missing spaces,
   excluded tokens, Unicode, context invalidation, delayed reports, document boundaries,
   own-change acknowledgements and undo (including the 3-second window). Jest runs it when `swiftc` is available and skips it
@@ -252,8 +288,10 @@ npm test -- --runInBand
 - `tests/KeyboardTouchTests.swift` (Catalyst): the controller with a stub provider: correction,
   the Settings switch, English, neighbouring-key slips, umlaut respelling, noun capitalisation,
   long words, missing spaces, undo and its window, recorrection suppression, double space,
-  silent hosts, cursor changes, field guards, transcript exclusion and held delete.
-- Jest: the settings screen and Preferences row, the App Group mirror, the language list kept in
+  silent hosts, cursor changes, field guards, transcript exclusion, held delete, and the app's
+  dictionary (a protected word, a typo to the user's word and its undo, a shared word as no target).
+- Jest: the settings screen and Preferences row, the App Group mirror (dictionary included:
+  serialization, bounds, change tracking, failed writes, the account reset), the language list kept in
   step with the keyboard's, and source registration in `withKeyboardExtension.js`.
 
 `KeyboardAutocorrection.swift` and `TextCheckerCorrectionProvider.swift` are registered in
@@ -277,5 +315,8 @@ npm test -- --runInBand
 4. Notes, Messages and a Safari text area, with fast typing: no correction is better than one in
    the wrong place. Move the cursor, select text, switch fields, apps and keyboards: no stale
    replacement.
-5. Password, URL, email and `.no` fields, `foo_bar`, `fooBar`, numbers, emoji, dictation and
+5. Add `Hrudek` and `OpenWhispr` to the dictionary: `Hrudek` + space stays, `Hrudke` → `Hrudek`,
+   `openwhsipr` → `OpenWhispr` (backspace → `openwhsipr`). Remove them: `Hrudek` is corrected
+   like any word again. Sign out: none of them applies.
+6. Password, URL, email and `.no` fields, `foo_bar`, `fooBar`, numbers, emoji, dictation and
    assistant output: unchanged.

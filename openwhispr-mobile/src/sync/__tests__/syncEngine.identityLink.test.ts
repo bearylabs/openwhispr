@@ -42,6 +42,9 @@ jest.mock('@/store/useConfigStore', () => ({
 }));
 
 const noopStore = { getState: () => ({ reset: jest.fn(), load: jest.fn(), set: jest.fn() }) };
+jest.mock('@/lib/keyboardAutocorrectionSync', () => ({
+  clearingKeyboardWords: (reset: () => void) => reset(),
+}));
 jest.mock('@/store/useDictionaryStore', () => ({ useDictionaryStore: noopStore }));
 jest.mock('@/store/useSnippetsStore', () => ({ useSnippetsStore: noopStore }));
 jest.mock('@/store/useNotesStore', () => ({

@@ -1,8 +1,13 @@
+import { Platform } from 'react-native';
 import { useConfigStore } from '@/store/useConfigStore';
+import { useDictionaryStore } from '@/store/useDictionaryStore';
+import { useSharedDictionaryStore } from '@/store/useSharedDictionaryStore';
+import { buildDictationHintTiers } from '@/lib/dictationHints';
 import {
   normalizeKeyboardAutocorrectionLanguages,
   type KeyboardAutocorrectionLanguage,
 } from '@/lib/keyboardAutocorrection';
+import { serializeKeyboardWords } from '@/lib/keyboardAutocorrectionWords';
 import { AppGroupStorage, APP_GROUP_KEYS } from '../../modules/app-group-storage/src';
 
 // Default on: the keyboard also treats a missing key (fresh install, no Full Access) as on.
@@ -32,6 +37,44 @@ function writeAppGroupAutocorrection(): void {
   writeLanguages(keyboardAutocorrectionLanguages());
 }
 
+// The last value the App Group accepted; null until then, or after a failed write, so the next
+// change retries it.
+let writtenWords: string | null = null;
+let clearing = 0;
+
+// The words the dictionary applies to dictation (personal, then the shared ones that apply; no
+// snippet triggers), only while autocorrection is on, so the keyboard keeps no copy it doesn't use.
+function keyboardWordsValue(): string {
+  if (clearing > 0 || !isKeyboardAutocorrectionEnabled()) return '';
+  const [personal = [], space = [], workspace = []] = buildDictationHintTiers(false);
+  return serializeKeyboardWords(personal, [...space, ...workspace]);
+}
+
+function writeKeyboardWords(): void {
+  if (Platform.OS !== 'ios') return;
+  const value = keyboardWordsValue();
+  if (value === writtenWords) return;
+  writtenWords = AppGroupStorage.setItem(APP_GROUP_KEYS.KEYBOARD_AUTOCORRECTION_WORDS, value)
+    ? value
+    : null;
+}
+
+/**
+ * Runs `reset` (clearing an account's dictionary stores) with the keyboard's copy emptied first
+ * and kept empty until it returns: the stores reset one after the other, and a mirror written in
+ * between would publish what is left of the previous account's words.
+ */
+export function clearingKeyboardWords(reset: () => void): void {
+  clearing += 1;
+  try {
+    writeKeyboardWords();
+    reset();
+  } finally {
+    clearing -= 1;
+    writeKeyboardWords();
+  }
+}
+
 // Settings controls: write the App Group key first so the keyboard follows at once, without
 // waiting on async config persistence.
 export function setKeyboardAutocorrectionEnabled(enabled: boolean): void {
@@ -55,5 +98,18 @@ export function setKeyboardAutocorrectionLanguages(languages: readonly string[])
 // every config change.
 export function startKeyboardAutocorrectionSync(): () => void {
   writeAppGroupAutocorrection();
-  return useConfigStore.subscribe(writeAppGroupAutocorrection);
+  // Written at every start, whatever an earlier start wrote.
+  writtenWords = null;
+  writeKeyboardWords();
+  const unsubscribers = [
+    useConfigStore.subscribe(() => {
+      writeAppGroupAutocorrection();
+      writeKeyboardWords();
+    }),
+    useDictionaryStore.subscribe(writeKeyboardWords),
+    useSharedDictionaryStore.subscribe(writeKeyboardWords),
+  ];
+  return () => {
+    for (const unsubscribe of unsubscribers) unsubscribe();
+  };
 }

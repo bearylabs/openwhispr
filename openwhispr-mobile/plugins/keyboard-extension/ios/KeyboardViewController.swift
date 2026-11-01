@@ -1148,6 +1148,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var textCheckerProvider: TextCheckerCorrectionProvider?
   /// Seconds of system uptime, for the backspace undo window; replaced by tests.
   private var autocorrectionClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+  /// The App Group's dictionary value; nil reads it, with Full Access only.
+  private var autocorrectionWords: (() -> String?)?
+  /// The parsed dictionary and the value it was parsed from.
+  private var userDictionaryCache: (raw: String, dictionary: KeyboardUserDictionary)?
   /// Read at each manual space, so the Settings switch applies without reopening the keyboard.
   private var autocorrectionSwitchedOn: () -> Bool = {
     KeyboardHandoffProvider.shared.isAutocorrectionSwitchedOn()
@@ -1410,6 +1414,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   /// limit: drop the text checker and its caches; the next space builds them again.
   private func releaseCorrectionDictionaries() {
     textCheckerProvider = nil
+    userDictionaryCache = nil
   }
 
   deinit {
@@ -1642,6 +1647,17 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     return provider
   }
 
+  /// The app's dictionary, read at every correction like the switch. Without Full Access the
+  /// App Group can't be read, and no earlier copy is used.
+  private func currentUserDictionary() -> KeyboardUserDictionary {
+    let raw = (autocorrectionWords.map { $0() }
+      ?? (hasFullAccess ? KeyboardHandoffProvider.shared.autocorrectionWordsSetting() : nil)) ?? ""
+    if let userDictionaryCache, userDictionaryCache.raw == raw { return userDictionaryCache.dictionary }
+    let dictionary = KeyboardUserDictionary(json: raw)
+    userDictionaryCache = (raw, dictionary)
+    return dictionary
+  }
+
   private func applyManualSpaceCorrection() -> Bool {
     applyManualCorrection(typing: " ")
   }
@@ -1660,7 +1676,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     // The lookups' autoreleased temporaries are freed here, not at the end of the run loop pass.
     let edit = autoreleasepool {
       autocorrection.correction(
-        in: context, provider: currentCorrectionProvider(), delimiter: delimiter)
+        in: context, provider: currentCorrectionProvider(), dictionary: currentUserDictionary(),
+        delimiter: delimiter)
     }
     guard let edit,
           // UITextChecker may take time. Re-read the proxy immediately before any deletion.
@@ -4949,6 +4966,7 @@ private struct KeyboardHandoffProvider {
   private let toneApplicableKey = "keyboard_tone_applicable"
   private let autocorrectionSwitchKey = "keyboard_autocorrection_enabled"
   private let autocorrectionLanguagesKey = "keyboard_autocorrection_languages"
+  private let autocorrectionWordsKey = "keyboard_autocorrection_words"
   // Dictation-agent mirror keys (app-written, persist across launches) and the
   // one-shot request / result channels shared with the main app.
   private let agentEnabledKey = "keyboard_agent_enabled"
@@ -5080,6 +5098,11 @@ private struct KeyboardHandoffProvider {
   /// "de,en" as the app writes it; nil without Full Access, which selects the default.
   func autocorrectionLanguageSetting() -> String? {
     UserDefaults(suiteName: appGroupId)?.string(forKey: autocorrectionLanguagesKey)
+  }
+
+  /// The app's dictionary for autocorrection (`KeyboardUserDictionary`); empty while it is off.
+  func autocorrectionWordsSetting() -> String? {
+    UserDefaults(suiteName: appGroupId)?.string(forKey: autocorrectionWordsKey)
   }
 
   // MARK: Dictation agent

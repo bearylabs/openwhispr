@@ -150,6 +150,7 @@ private extension KeyboardViewController {
   func touchTestTapLetter(_ index: Int) { handleCharacterKeyTapped(characterButtons[index]) }
   func touchTestSetProvider(_ provider: KeyboardCorrectionProvider) { correctionProvider = provider }
   func touchTestSetAutocorrectionSwitch(_ on: @escaping () -> Bool) { autocorrectionSwitchedOn = on }
+  func touchTestSetAutocorrectionWords(_ value: @escaping () -> String?) { autocorrectionWords = value }
   func touchTestTypeWord(_ word: String, hostCallbacks: Bool = false) {
     isShiftEnabled = false
     for character in word {
@@ -514,6 +515,7 @@ private enum KeyboardTouchTests {
       controller.touchTestSetProvider(CorrectionStub())
       // Never the developer machine's App Group value.
       controller.touchTestSetAutocorrectionSwitch { true }
+      controller.touchTestSetAutocorrectionWords { nil }
       return controller
     }
     var controller = keyboard()
@@ -672,6 +674,27 @@ private enum KeyboardTouchTests {
     checks.check("english correction", TestEnvironment.proxy.documentContextBeforeInput == "the ")
     controller.touchTestTapDelete()
     checks.check("english undo", TestEnvironment.proxy.documentContextBeforeInput == "teh")
+
+    // The app's dictionary: its words stay, and a typo may become one of the user's own.
+    controller = keyboard()
+    controller.touchTestSetAutocorrectionWords { #"{"v":1,"personal":["nciht"],"shared":[]}"# }
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    checks.check("a dictionary word is never corrected", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
+    controller = keyboard()
+    controller.touchTestSetProvider(CorrectionStub(words: []))
+    controller.touchTestSetAutocorrectionWords { #"{"v":1,"personal":["OpenWhispr"],"shared":[]}"# }
+    controller.touchTestTypeWord("openwhsipr")
+    controller.touchTestTapSpace()
+    checks.check("a typo becomes the user's word", TestEnvironment.proxy.documentContextBeforeInput == "OpenWhispr ")
+    controller.touchTestTapDelete()
+    checks.check("the user's word undoes", TestEnvironment.proxy.documentContextBeforeInput == "openwhsipr")
+    controller = keyboard()
+    controller.touchTestSetProvider(CorrectionStub(words: []))
+    controller.touchTestSetAutocorrectionWords { #"{"v":1,"personal":[],"shared":["OpenWhispr"]}"# }
+    controller.touchTestTypeWord("openwhsipr")
+    controller.touchTestTapSpace()
+    checks.check("a shared word is no target", TestEnvironment.proxy.documentContextBeforeInput == "openwhsipr ")
 
     controller = keyboard()
     controller.touchTestSetProvider(CorrectionStub(words: ["funktioniert"]))

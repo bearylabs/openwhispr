@@ -131,6 +131,43 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   /// that language's dictionary alone checks it.
   func suggestions(for word: String, before: String) -> [String] {
     startDeadline()
+    return suggestionsWithinDeadline(for: word, before: before)
+  }
+
+  /// The app's dictionary first (`KeyboardUserDictionary.decide`): a word in it is left alone,
+  /// and a misspelled word may become one of the user's own words. The scan shares the press's
+  /// time budget with the ordinary search that follows.
+  func replacement(for word: String, before: String, dictionary: KeyboardUserDictionary) -> String? {
+    let ordinary = {
+      KeyboardCorrectionRules.replacement(
+        for: word, suggestions: self.suggestionsWithinDeadline(for: word, before: before),
+        letters: self.letters, rank: { self.frequencyRank(of: $0) })
+    }
+    startDeadline()
+    guard !dictionary.isEmpty else { return ordinary() }
+    if dictionary.protects(word) {
+      log.info("Autocorrection skipped: word in the user's dictionary")
+      return nil
+    }
+    var ordinaryPick: String?
+    let pick = dictionary.decide(
+      for: word, letters: letters,
+      misspelled: {
+        let range = NSRange(word.startIndex..<word.endIndex, in: word)
+        return !dictionaries.isEmpty && dictionaries.allSatisfy { misspelledRange(of: word, in: $0) == range }
+      },
+      shouldStop: { self.stop() },
+      ordinary: {
+        ordinaryPick = ordinary()
+        return ordinaryPick
+      })
+    // Flags only, never the word or the dictionary's words.
+    log.info("Autocorrection user dictionary: entries=\(dictionary.protected.count, privacy: .public) userWord=\(pick != nil && pick != ordinaryPick, privacy: .public)")
+    return pick
+  }
+
+  /// `suggestions(for:before:)` within a time budget already started.
+  private func suggestionsWithinDeadline(for word: String, before: String) -> [String] {
     if KeyboardCorrectionRules.isSwappable(word, letters: letters) {
       return swapSuggestions(for: word, before: before)
     }

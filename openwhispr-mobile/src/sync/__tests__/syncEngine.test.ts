@@ -132,6 +132,9 @@ jest.mock('@/store/useSharedDictionaryStore', () => ({
   loadSharedDictionaryIfOwnedBy: (...args: unknown[]) => mockLoadSharedDictionaryIfOwnedBy(...args),
 }));
 
+jest.mock('@/lib/keyboardAutocorrectionSync', () => ({
+  clearingKeyboardWords: (reset: () => void) => reset(),
+}));
 jest.mock('@/store/useDictionaryStore', () => ({
   useDictionaryStore: { getState: () => ({ reset: jest.fn(), load: jest.fn() }) },
 }));

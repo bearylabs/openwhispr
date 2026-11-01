@@ -26,6 +26,7 @@ import {
   useSharedDictionaryStore,
 } from '@/store/useSharedDictionaryStore';
 import { useSnippetsStore } from '@/store/useSnippetsStore';
+import { clearingKeyboardWords } from '@/lib/keyboardAutocorrectionSync';
 import { runInitialBackfillIfNeeded } from './initialBackfill';
 import { resetAllPullCursors } from './pullCursors';
 import {
@@ -214,9 +215,11 @@ function reconcileSyncIdentity(auth: ReturnType<typeof useAuthStore.getState>): 
       // Immediately clear in-memory dictionary + snippets + shared words so any
       // UI/transcription path that reads them between now and the post-pull
       // load() doesn't see the previous user's data.
-      useDictionaryStore.getState().reset();
-      useSnippetsStore.getState().reset();
-      useSharedDictionaryStore.getState().reset();
+      clearingKeyboardWords(() => {
+        useDictionaryStore.getState().reset();
+        useSnippetsStore.getState().reset();
+        useSharedDictionaryStore.getState().reset();
+      });
     } else if (lastUserId) {
       // The rows stay, but the server migrated billing only: every remote id
       // and pull cursor on this device still belongs to the anonymous user.
@@ -638,9 +641,11 @@ export function initSyncTriggers(): void {
         // words) so the previous user's data doesn't bleed into a guest
         // session or transcription prompts before the next sync wipes/reloads
         // SQLite.
-        useDictionaryStore.getState().reset();
-        useSnippetsStore.getState().reset();
-        useSharedDictionaryStore.getState().reset();
+        clearingKeyboardWords(() => {
+          useDictionaryStore.getState().reset();
+          useSnippetsStore.getState().reset();
+          useSharedDictionaryStore.getState().reset();
+        });
         // After a real account signs out, whoever signs in next is a new
         // account, not a link, so the next id change has to be free to wipe.
         // An anonymous session signing out keeps the link armed: the rows

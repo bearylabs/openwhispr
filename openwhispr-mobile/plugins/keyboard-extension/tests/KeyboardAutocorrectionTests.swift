@@ -49,6 +49,108 @@ private enum KeyboardAutocorrectionTests {
     return (state, current)
   }
 
+  static func userDictionary(_ personal: [String], shared: [String] = []) -> KeyboardUserDictionary {
+    let data = try! JSONSerialization.data(withJSONObject: ["v": 1, "personal": personal, "shared": shared] as [String: Any])
+    return KeyboardUserDictionary(json: String(decoding: data, as: UTF8.self))
+  }
+
+  /// The app's dictionary (`KeyboardUserDictionary`): parsing, protection, the user's words as
+  /// targets, and how they reach the state machine's edit.
+  static func userDictionaryChecks(document: UUID) {
+    check("no value is an empty dictionary", KeyboardUserDictionary(json: nil).isEmpty
+      && KeyboardUserDictionary(json: "").isEmpty)
+    check("malformed values are empty", KeyboardUserDictionary(json: "Hrudek").isEmpty
+      && KeyboardUserDictionary(json: "[\"Hrudek\"]").isEmpty
+      && KeyboardUserDictionary(json: "{\"v\":2,\"personal\":[\"Hrudek\"]}").isEmpty
+      && KeyboardUserDictionary(json: "{\"personal\":[\"Hrudek\"]}").isEmpty)
+    check("an oversized value is empty", KeyboardUserDictionary(
+      json: "{\"v\":1,\"personal\":[\"" + String(repeating: "a", count: KeyboardUserDictionary.maxBytes)
+        + "\"]}").isEmpty)
+
+    let words = userDictionary(["Hrudek", "OpenWhispr", "kubectl", "New York", "Tim", "NASA",
+                                "GPT-6", "me@example.com", "Lennart"],
+                               shared: ["Kubernetes", "os"])
+    check("protects in any case", words.protects("Hrudek") && words.protects("hrudek")
+      && words.protects("openwhispr") && words.protects("Kubectl"))
+    check("protects the words of a phrase", words.protects("york") && words.protects("New"))
+    check("protects shared and short words", words.protects("kubernetes") && words.protects("os")
+      && words.protects("tim"))
+    check("technical strings protect nothing", !words.protects("gpt") && !words.protects("example")
+      && !words.protects("me"))
+    check("other words aren't protected", !words.protects("nicht"))
+    let decomposed = userDictionary(["Sine\u{301}ad"])
+    check("a decomposed entry protects the composed word", decomposed.protects("Sin\u{e9}ad")
+      && decomposed.protects("sine\u{301}ad"))
+    check("İ is no word", !KeyboardUserDictionary.isLetterWord("İstanbul")
+      && KeyboardUserDictionary.isLetterWord("Sin\u{e9}ad") && !KeyboardUserDictionary.isLetterWord("Sine\u{301}ad"))
+    // Distinct letter-only words: the index in base 26, a to z.
+    let many = (0..<(KeyboardUserDictionary.maxEntries + 1)).map { index -> String in
+      var rest = index
+      var word = "w"
+      repeat {
+        word.append(Character(UnicodeScalar(UInt8(97 + rest % 26))))
+        rest /= 26
+      } while rest > 0
+      return word
+    }
+    let capped = userDictionary(many)
+    check("entries are capped", capped.protects(many[KeyboardUserDictionary.maxEntries - 1])
+      && !capped.protects(many[KeyboardUserDictionary.maxEntries]))
+    check("an overlong entry is skipped, the rest kept", {
+      let dictionary = userDictionary([String(repeating: "a", count: KeyboardUserDictionary.maxEntryLength + 1), "Hrudek"])
+      return dictionary.protects("Hrudek") && !dictionary.protects(String(repeating: "a", count: 65))
+    }())
+
+    check("a swap becomes the user's word", words.target(for: "Hrudke")?.word == "Hrudek")
+    check("the stored spelling is kept", words.target(for: "openwhsipr")?.word == "OpenWhispr"
+      && words.target(for: "Openwhsipr")?.word == "OpenWhispr")
+    check("title case capitalises a lowercase word", words.target(for: "Kubectk")?.word == "Kubectl"
+      && words.target(for: "kubectk")?.word == "kubectl")
+    check("a missing letter becomes the user's word", words.target(for: "Lenart")?.word == "Lennart")
+    check("far-away words are no target", words.target(for: "Hruxyz") == nil
+      && words.target(for: "Hdurke") == nil)
+    check("shared, short, all-caps and phrase words are no target",
+          words.target(for: "Kubernetse") == nil && words.target(for: "Tmi") == nil
+            && words.target(for: "NASS") == nil && words.target(for: "Yrok") == nil)
+    check("two equally close words are no target",
+          userDictionary(["Lennart", "Leonart"]).target(for: "Lenart") == nil)
+    check("a word whose capital expands is no target", userDictionary(["ßtraße"]).target(for: "ßtarße") == nil)
+    check("a scan out of time finds nothing", words.target(for: "Hrudke", shouldStop: { true }) == nil)
+
+    check("no ordinary pick: the user's word", KeyboardUserDictionary.resolve(
+      word: "Hrudke", ordinary: nil, target: ("Hrudek", 1)) == "Hrudek")
+    check("a strictly closer user's word wins", KeyboardUserDictionary.resolve(
+      word: "Hrudke", ordinary: "Hrude", target: ("Hrudek", 1)) == "Hrudek")
+    check("an equally close ordinary pick wins", KeyboardUserDictionary.resolve(
+      word: "nciht", ordinary: "nicht", target: ("Nicht", 1)) == "nicht")
+    check("a German respelling wins", KeyboardUserDictionary.resolve(
+      word: "strasse", ordinary: "Straße", target: ("Strasse", 0.1)) == "Straße")
+    check("a split counts its missing space", KeyboardUserDictionary.ordinaryCost(
+      of: "ich habe", for: "ichhabe") == KeyboardCorrectionRules.splitCost
+      && KeyboardUserDictionary.resolve(word: "ichhabe", ordinary: "ich habe", target: ("Ichhabee", 0.9)) == "Ichhabee"
+      && KeyboardUserDictionary.resolve(word: "ichhabe", ordinary: "ich habe", target: ("Ichhabee", 1)) == "ich habe")
+    check("a known word never becomes the user's word", words.decide(
+      for: "Hrudke", letters: KeyboardCorrectionRules.defaultLetters, misspelled: { false },
+      shouldStop: { false }, ordinary: { nil }) == nil)
+
+    // Through the state machine, as the keyboard applies it.
+    var protected = typed("nciht", document: document)
+    check("a protected word is never corrected", protected.0.correction(
+      in: protected.1, provider: StubProvider(), dictionary: userDictionary(["nciht"])) == nil)
+    var protectedSwap = typed("os", document: document)
+    check("a protected two-letter word isn't swapped", protectedSwap.0.correction(
+      in: protectedSwap.1, provider: StubProvider(words: ["so"]), dictionary: words) == nil)
+    var brand = typed("openwhsipr", document: document)
+    check("a typo becomes a mixed-case user's word", brand.0.correction(
+      in: brand.1, provider: StubProvider(words: []), dictionary: words)?.replacement == "OpenWhispr")
+    var name = typed("Hrudke", document: document)
+    check("a typo becomes the user's name", name.0.correction(
+      in: name.1, provider: StubProvider(words: ["Hrude"]), dictionary: words)?.replacement == "Hrudek")
+    var ordinary = typed("nciht", document: document)
+    check("other words correct as before", ordinary.0.correction(
+      in: ordinary.1, provider: StubProvider(), dictionary: words)?.replacement == "nicht")
+  }
+
   static func main() {
     let provider = StubProvider()
     let document = UUID()
@@ -737,6 +839,7 @@ private enum KeyboardAutocorrectionTests {
       in: germanOnly.1, provider: SelectionProvider(
         words: ["Mädchen"], letters: KeyboardCorrectionLanguage.letters(of: [german])))
     check("german selection corrects umlaut word", germanEdit?.replacement == "Mädchen")
+    userDictionaryChecks(document: document)
     if failed > 0 {
       print("Keyboard autocorrection: \(failed) of \(count) checks failed")
       exit(1)
