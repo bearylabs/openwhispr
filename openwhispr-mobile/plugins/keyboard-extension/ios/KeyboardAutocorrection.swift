@@ -44,19 +44,25 @@ struct KeyboardCorrectionLanguage: Equatable {
   /// The language's common two-letter words (and interjections): a two-letter word is swapped
   /// only into one of these, and never when it is one itself (`na`, `eh` stay).
   var twoLetterWords: Set<String> = []
+  /// Further two-letter words that are never swapped but aren't swapped into either (`hä`
+  /// stays, and `äh` never becomes it).
+  var keptTwoLetterWords: Set<String> = []
 
   private static let latin = Set("abcdefghijklmnopqrstuvwxyz")
   static let german = Self(code: "de", dictionaries: ["de_DE", "de-DE", "de"],
                            letters: latin.union("äöüß"),
                            twoLetterWords: ["ab", "ah", "am", "an", "da", "du", "eh", "er", "es", "ha",
                                             "im", "in", "ja", "je", "na", "ne", "nö", "ob", "oh", "ok",
-                                            "so", "um", "wo", "zu", "äh"])
+                                            "so", "um", "wo", "zu", "äh"],
+                           keptTwoLetterWords: ["hä", "ma", "ey", "yo", "ui", "en", "ho"])
   static let english = Self(code: "en", dictionaries: ["en_US", "en-US", "en_GB", "en-GB", "en"],
                             letters: latin,
                             twoLetterWords: ["ah", "am", "an", "as", "at", "be", "by", "do", "eh", "go",
                                              "ha", "he", "hi", "if", "in", "is", "it", "me", "my", "no",
                                              "of", "oh", "ok", "on", "or", "so", "to", "uh", "um", "up",
-                                             "us", "we"])
+                                             "us", "we"],
+                            keptTwoLetterWords: ["ad", "em", "ew", "ho", "ma", "ow", "pa", "ta", "ya",
+                                                 "ye", "yo", "ox", "mu", "re"])
   /// Adding a language: an entry here, its code in the app's list, and tests.
   static let all = [german, english]
   static let defaultSelection = [german, english]
@@ -137,7 +143,7 @@ enum KeyboardCorrectionRules {
   static func twoLetterSwap(of word: String, sentence: [KeyboardCorrectionLanguage],
                             selected: [KeyboardCorrectionLanguage]) -> String? {
     let typed = word.lowercased(), swap = swapped(typed)
-    guard selected.allSatisfy({ !$0.twoLetterWords.contains(typed) }),
+    guard selected.allSatisfy({ !$0.twoLetterWords.contains(typed) && !$0.keptTwoLetterWords.contains(typed) }),
           sentence.contains(where: { $0.twoLetterWords.contains(swap) }) else { return nil }
     return swapped(word)
   }

@@ -96,7 +96,9 @@ A two-letter word is only ever corrected into its two letters swapped (`twoLette
 common two-letter words of the sentence's language (of any selected language when the sentence
 has none; `KeyboardCorrectionLanguage.twoLetterWords`) and known to its dictionary, and the typed
 word none of any selected language's. A dictionary knowing the typed word doesn't stop it
-(English knows `os`); the lists keep what people type (`na`, `eh`, `oh`, `on`, `no`). Nothing else
+(English knows `os`); the lists keep what people type (`na`, `eh`, `oh`, `on`, `no`), and
+`keptTwoLetterWords` protects further words that are no swap target themselves (`hä`, `ma`,
+`ta`, `ad`, `ow`, `ew`). Nothing else
 is proposed, so `qm` stays.
 
 ### Capitalised words German accepts as compounds

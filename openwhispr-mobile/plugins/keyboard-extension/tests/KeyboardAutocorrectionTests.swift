@@ -343,6 +343,13 @@ private enum KeyboardAutocorrectionTests {
     check("a common two-letter word is never swapped",
           swap("na") == nil && swap("eh") == nil && swap("on") == nil && swap("no") == nil)
     check("no common swap, no correction", swap("qm") == nil && swap("xy") == nil)
+    for kept in ["hä", "Hä", "ma", "ta", "ad", "ow", "ew", "em", "re"] {
+      check("kept two-letter word: \(kept)", swap(kept) == nil && swap(kept, sentence: [de]) == nil
+        && swap(kept, sentence: [en]) == nil
+        && KeyboardCorrectionRules.twoLetterSwap(of: kept, sentence: [en], selected: [en]) == nil)
+    }
+    check("a kept word is never a target", KeyboardCorrectionLanguage.all.allSatisfy {
+      $0.keptTwoLetterWords.isDisjoint(with: $0.twoLetterWords) })
     check("every two-letter word is lowercase and two letters",
           KeyboardCorrectionLanguage.all.allSatisfy { $0.twoLetterWords.allSatisfy {
             $0.count == 2 && $0 == $0.lowercased() } })
