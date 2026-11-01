@@ -100,12 +100,15 @@ of the language's most common words. Nothing else is proposed, so `qm` stays.
 ### Capitalised words German accepts as compounds
 
 German's dictionary accepts almost any capitalised word as a possible compound noun, so
-`Ichhabe` or `Moeglichkwitne` at the start of a sentence pass the misspelling check. A
-capitalised word that has no frequency rank and that every dictionary flags in lowercase
-(`acceptedOnlyAsCompound`) is still corrected, but only into two common words (`Ich habe`), a
-German respelling that is more than such a compound, or a ranked completion of its start
-(`Möglichkeiten`). Apple's proposals, single edits and slips aren't used for it, so a rare
-compound noun stays as typed.
+`Ichhabe` or `Moeglichkwitne` at the start of a sentence pass the misspelling check. Such a word
+is still treated as a typo (`acceptedOnlyAsCompound`) when German is selected and accepts it, no
+other selected language does (so `Michael` stays), it has no frequency rank (so `Haus` stays),
+and every dictionary flags it in lowercase (so `Erleben` and `Einmal` stay). It is then only
+corrected (`isCompoundCorrection`) into two common words with a German subject pronoun first
+(`Ich habe`; never `Morgen rot`), or into a common (ranked) respelling or completion that uses
+an ä/ö/ü/ß the word spelled as ae/oe/ue/ss (`Möglichkeiten`). Apple's proposals, single edits
+and slips aren't used for it. A rare compound starting with a pronoun (`Wirsing` → `Wir sing`)
+or spelled with ae/oe/ue can still be corrected wrongly; backspace right after undoes it.
 
 ### Own candidates
 
@@ -115,8 +118,8 @@ every single swap, missing and extra letter (`singleEditCandidates`), then words
 and three neighbouring-key slips (`neighborSlipCandidates`; one slip in three-letter words, two
 in four-letter words). All levels are searched, since a common word with more slips can beat a
 rare one with fewer; a level that would pass 1,500 variants is skipped with the levels after
-it. The space press waits for this, so the search stops after 100 ms and drops the level it
-was in.
+it. The space press waits for this, so the search stops 100 ms after the press asked for
+suggestions (Apple's proposals included) and drops the level it was in.
 
 Two cheaper searches run first, inside the same 100 ms, which is checked before every
 dictionary lookup and every scored completion; a search cut short by it gives nothing, like a

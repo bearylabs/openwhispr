@@ -21,8 +21,23 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   private let germanDictionary: String?
   private let checker = UITextChecker()
   private var completionCache: [String: [String]] = [:]
-  /// How long a space press may spend looking up neighbouring-key variants.
+  /// How long a space press may spend on its own lookups, from the moment it asks for
+  /// suggestions; each search stops at it and drops what it didn't finish.
   static let slipSearchNanoseconds: UInt64 = 100_000_000
+  private var deadline: UInt64 = 0
+  private var timedOut = false
+
+  /// Starts the press's time budget.
+  private func startDeadline() {
+    deadline = DispatchTime.now().uptimeNanoseconds + Self.slipSearchNanoseconds
+    timedOut = false
+  }
+
+  /// Whether the press's time budget is used up; stays true once it is.
+  private func stop() -> Bool {
+    if !timedOut && DispatchTime.now().uptimeNanoseconds >= deadline { timedOut = true }
+    return timedOut
+  }
   private let log = Logger(subsystem: "com.gizmolabs.openwhispr.keyboard", category: "Autocorrection")
 
   init(languages: [KeyboardCorrectionLanguage]) {
@@ -114,6 +129,7 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   /// typo when it isn't common there (`woe` in German text → `wie`, while `cool` stays), so
   /// that language's dictionary alone checks it.
   func suggestions(for word: String, before: String) -> [String] {
+    startDeadline()
     if KeyboardCorrectionRules.isSwappable(word, letters: letters) {
       return swapSuggestions(for: word, before: before)
     }
@@ -153,8 +169,9 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     let checked = sentence.map { [$0] } ?? dictionaries
     let typed = word.lowercased()
     let swap = KeyboardCorrectionRules.swapped(typed)
-    guard checked.allSatisfy({ !isKnown(typed, in: $0) }),
-          checked.contains(where: { isKnown(swap, in: $0) && isCommonShortWord(swap, in: $0) }) else {
+    guard checked.allSatisfy({ !stop() && !isKnown(typed, in: $0) }),
+          checked.contains(where: { !stop() && isKnown(swap, in: $0) && isCommonShortWord(swap, in: $0) }),
+          !stop() else {
       log.info("Autocorrection swap skipped: sentenceLanguage=\(sentence != nil, privacy: .public)")
       return []
     }
@@ -167,6 +184,7 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   private func isCommonShortWord(_ word: String, in dictionary: String) -> Bool {
     autoreleasepool {
       [String(word.prefix(1)), word].contains { prefix in
+        guard !stop() else { return false }
         let range = NSRange(prefix.startIndex..<prefix.endIndex, in: prefix)
         let completions = checker.completions(forPartialWordRange: range, in: prefix, language: dictionary) ?? []
         return completions.prefix(KeyboardCorrectionRules.maxSwapRank).contains { $0.lowercased() == word }
@@ -187,6 +205,7 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     // `Moeglichkwitne` at the start of a sentence pass. Such a word is still corrected, but only
     // into two common words, a German respelling or a common completion of its start.
     let compound = !flagged && acceptedOnlyAsCompound(word, in: dictionaries)
+    if compound { log.info("Autocorrection compound-like capitalised word") }
     guard flagged || compound else {
       // Except German typed without umlauts that a dictionary (English, or one with Swiss or
       // learned spellings) accepts as it is: `moechte`, `strasse`.
@@ -220,12 +239,6 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     // try those variants against the dictionaries too: single edits first, then every level of
     // slips, since a common word with more slips can beat a rare one with fewer. The space
     // press waits for this, so it stops at a deadline; a level cut short is dropped.
-    var timedOut = false
-    let deadline = DispatchTime.now().uptimeNanoseconds + Self.slipSearchNanoseconds
-    let stop: () -> Bool = {
-      if DispatchTime.now().uptimeNanoseconds >= deadline { timedOut = true }
-      return timedOut
-    }
     // A lowercase variant also counts when German knows it capitalised (a noun: `hsus` → `haus`
     // → `Haus`); `caseFixed` then gives it its capital.
     let known: (String) -> Bool = { variant in
@@ -246,10 +259,11 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     // Long words whose end went wrong, from the completions of their start (`moeglichkwitne` →
     // `möglichk` → `Möglichkeiten`), and two words typed without their space (`ichhabe` →
     // `ich habe`). Both take few lookups, so they run before the slip search can use up the time.
-    let completed = completionCandidates(for: word, using: dictionaries, shouldStop: stop)
+    let isOver: () -> Bool = { self.stop() }
+    let completed = completionCandidates(for: word, using: dictionaries, shouldStop: isOver)
     let isCommonSplit: (String, String, [String]) -> Bool = { left, right, dictionaries in
       KeyboardCorrectionRules.isCommonSplit(
-        left, right, in: dictionaries, shouldStop: stop,
+        left, right, in: dictionaries, shouldStop: isOver,
         isKnown: { self.isKnown($0, in: $1) }, rank: { self.rank(of: $0, in: $1) })
     }
     // Apple's proposals with a space follow the rule for generated splits, in the dictionary
@@ -260,29 +274,39 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
       }
       return isCommonSplit(left, right, [guess.dictionary])
     }.map { $0.candidate }
-    if stop() { spaced = [] }
-    let generatedSplits = stop() ? [] : KeyboardCorrectionRules.splitCandidates(for: word, shouldStop: stop) {
+    if isOver() { spaced = [] }
+    let generatedSplits = isOver() ? [] : KeyboardCorrectionRules.splitCandidates(for: word, shouldStop: isOver) {
       isCommonSplit($0, $1, dictionaries)
     }
     let splits = spaced + generatedSplits.filter { !spaced.contains($0) }
-    let edits = compound || stop() ? [] : KeyboardCorrectionRules.singleEditCandidates(
-      for: word, letters: letters, shouldStop: stop, isKnown: known)
-    let slips = compound || stop() ? [] : KeyboardCorrectionRules.neighborSlipCandidates(
+    let edits = compound || isOver() ? [] : KeyboardCorrectionRules.singleEditCandidates(
+      for: word, letters: letters, shouldStop: isOver, isKnown: known)
+    let slips = compound || isOver() ? [] : KeyboardCorrectionRules.neighborSlipCandidates(
       for: word, maxSlips: KeyboardCorrectionRules.maxNeighborSlips(forLength: word.count),
-      shouldStop: stop, isKnown: known)
+      shouldStop: isOver, isKnown: known)
     var generated = 0
     // The typed word itself, when German only knows it capitalised (`haus` → `Haus`).
     let ownCapital = germanDictionary.map { german -> [String] in
       let noun = KeyboardCorrectionRules.capitalized(word)
       return noun != word && isKnown(noun, in: german) ? [noun] : []
     } ?? []
-    // A compound-like word only becomes a common completion (ranked), never a rare one, and
-    // only a respelling German knows as more than a possible compound (`Möglichkwitne` isn't).
-    let compoundCompletions = compound ? completed.filter { frequencyRank(of: $0) != nil } : completed
-    let compoundRespellings = compound
-      ? respellings.filter { !acceptedOnlyAsCompound($0, in: dictionaries) } : respellings
-    for candidate in (compound ? [] : ownCapital) + compoundRespellings + compoundCompletions + splits
-      + (edits + slips).map(caseFixed)
+    // A compound-like word only becomes two words with a pronoun first, or a common (ranked)
+    // respelling or completion using the umlauts it spelled as pairs (`isCompoundCorrection`);
+    // never a respelling German knows only as a possible compound itself (`Möglichkwitne`).
+    var compoundCandidates: [String] = []
+    if compound {
+      for candidate in respellings + completed + splits
+      where KeyboardCorrectionRules.isCompoundCorrection(candidate, of: word, letters: letters) {
+        if isOver() { compoundCandidates = []; break }
+        let accepted = candidate.contains(" ") || frequencyRank(of: candidate) != nil
+        if isOver() { compoundCandidates = []; break }
+        if accepted { compoundCandidates.append(candidate) }
+      }
+    }
+    let candidates = compound
+      ? compoundCandidates
+      : ownCapital + respellings + completed + splits + (edits + slips).map(caseFixed)
+    for candidate in candidates
     where !suggestions.contains(candidate) {
       suggestions.append(candidate)
       generated += 1
@@ -324,10 +348,17 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   /// A capitalised word that a dictionary accepts only as a possible compound: not a common
   /// word (no frequency rank), and every dictionary flags it in lowercase.
   private func acceptedOnlyAsCompound(_ word: String, in dictionaries: [String]) -> Bool {
-    let lower = word.lowercased()
-    guard word != lower, frequencyRank(of: word) == nil else { return false }
-    let range = NSRange(lower.startIndex..<lower.endIndex, in: lower)
-    return dictionaries.allSatisfy { misspelledRange(of: lower, in: $0) == range }
+    guard let germanDictionary, dictionaries.contains(germanDictionary) else { return false }
+    return KeyboardCorrectionRules.acceptedOnlyAsCompound(
+      word, shouldStop: { self.stop() },
+      germanKnows: { self.isKnown($0, in: germanDictionary) },
+      othersKnow: { word in
+        dictionaries.contains { $0 != germanDictionary && !self.stop() && self.isKnown(word, in: $0) } },
+      isRanked: { self.frequencyRank(of: $0) != nil },
+      lowercaseFlaggedEverywhere: { lower in
+        let range = NSRange(lower.startIndex..<lower.endIndex, in: lower)
+        return dictionaries.allSatisfy { !self.stop() && self.misspelledRange(of: lower, in: $0) == range }
+      })
   }
 
   /// Whether any selected dictionary's completions list `word` exactly in lowercase.

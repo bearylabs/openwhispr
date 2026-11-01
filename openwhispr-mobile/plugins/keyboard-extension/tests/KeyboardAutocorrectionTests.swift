@@ -336,6 +336,44 @@ private enum KeyboardAutocorrectionTests {
     check("a two-letter word is tracked and swapped", swapState.correction(
       in: swapContext, provider: StubProvider(words: ["im"]))?.replacement == "im")
 
+    // Capitalised words German accepts only as possible compounds.
+    let germanAccepts: Set<String> = ["Ichhabe", "Moeglichkwitne", "Morgenrot", "Haus", "Annabel",
+                                      "Michael", "Erleben"]
+    let englishAccepts: Set<String> = ["Annabel", "Michael"]
+    let rankedWords: Set<String> = ["Haus"]
+    let lowercaseKnown: Set<String> = ["haus", "erleben"]
+    func compoundLike(_ word: String, german: Bool = true, stopAfter: Int = .max) -> (Bool, Int) {
+      var lookups = 0
+      let result = KeyboardCorrectionRules.acceptedOnlyAsCompound(
+        word, shouldStop: { lookups >= stopAfter },
+        germanKnows: { lookups += 1; return german && germanAccepts.contains($0) },
+        othersKnow: { lookups += 1; return englishAccepts.contains($0) },
+        isRanked: { lookups += 1; return rankedWords.contains($0) },
+        lowercaseFlaggedEverywhere: { lookups += 1; return !lowercaseKnown.contains($0) })
+      return (result, lookups)
+    }
+    check("a capitalised typo German accepts as a compound", compoundLike("Ichhabe").0
+      && compoundLike("Moeglichkwitne").0)
+    check("a common noun isn't compound-like", !compoundLike("Haus").0)
+    check("a word another language knows isn't compound-like",
+          !compoundLike("Annabel").0 && !compoundLike("Michael").0)
+    check("a word known in lowercase isn't compound-like", !compoundLike("Erleben").0)
+    check("without German nothing is compound-like", !compoundLike("Ichhabe", german: false).0)
+    check("a lowercase word isn't compound-like", !compoundLike("ichhabe").0)
+    check("all caps isn't compound-like", !compoundLike("ICHHABE").0)
+    check("the compound check stops at the deadline", compoundLike("Ichhabe", stopAfter: 1) == (false, 1))
+    check("a compound found as the deadline passes gives nothing", !compoundLike("Ichhabe", stopAfter: 4).0)
+    check("a compound-like word splits after a pronoun",
+          KeyboardCorrectionRules.isCompoundCorrection("Ich habe", of: "Ichhabe"))
+    check("a real compound is never split", !KeyboardCorrectionRules.isCompoundCorrection(
+      "Morgen rot", of: "Morgenrot"))
+    check("a compound-like word becomes a word with the umlaut it spelled out",
+          KeyboardCorrectionRules.isCompoundCorrection("Möglichkeiten", of: "Moeglichkwitne"))
+    check("no umlaut spelled out, no correction", !KeyboardCorrectionRules.isCompoundCorrection(
+      "Morgenröte", of: "Morgenrot"))
+    check("an umlaut that was typed is no evidence", !KeyboardCorrectionRules.isCompoundCorrection(
+      "Übermut", of: "Übermute"))
+
     // Two words typed without their space.
     var cuts: [String] = []
     check("every cut into words of two letters or more",

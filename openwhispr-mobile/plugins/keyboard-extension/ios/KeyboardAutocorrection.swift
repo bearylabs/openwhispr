@@ -124,6 +124,42 @@ enum KeyboardCorrectionRules {
   /// of both its letters: the language's most common words (`im`, `so`, `is`).
   static let maxSwapRank = 25
 
+  /// German accepts almost any capitalised word as a possible compound noun, so `Ichhabe` and
+  /// `Moeglichkwitne` at the start of a sentence pass its misspelling check. Such a word is
+  /// treated as a typo only when German is selected and accepts it, no other selected language
+  /// does, it isn't a common word (no rank), and every dictionary flags it in lowercase (so
+  /// `Erleben`, `Einmal` and `Haus` stay). Each check is one lookup, made only while
+  /// `shouldStop` allows it.
+  static func acceptedOnlyAsCompound(
+    _ word: String, shouldStop: () -> Bool = { false },
+    germanKnows: (String) -> Bool, othersKnow: (String) -> Bool, isRanked: (String) -> Bool,
+    lowercaseFlaggedEverywhere: (String) -> Bool
+  ) -> Bool {
+    let lower = word.lowercased()
+    guard word != lower, word == capitalized(lower) else { return false }
+    guard !shouldStop(), germanKnows(word), !shouldStop(), !othersKnow(word), !shouldStop(),
+          !isRanked(word), !shouldStop(), lowercaseFlaggedEverywhere(lower) else { return false }
+    return !shouldStop()
+  }
+
+  /// The only first words a compound-like word is split into: German subject pronouns
+  /// (`Ichhabe` → `Ich habe`), so a real compound such as `Morgenrot` is never cut in two.
+  static let compoundSplitSubjects: Set<String> = ["ich", "du", "er", "es", "wir", "ihr", "sie", "man"]
+
+  /// Whether a compound-like word may become `candidate`: two words with a pronoun first
+  /// (`Ich habe`), or a word with an ä/ö/ü/ß the typed word spelled as ae/oe/ue/ss
+  /// (`Moeglichkwitne` → `Möglichkeiten`), so typing without umlauts is evidence of a typo.
+  static func isCompoundCorrection(_ candidate: String, of word: String,
+                                   letters: Set<Character> = KeyboardCorrectionRules.defaultLetters) -> Bool {
+    if let (left, _) = splitParts(of: candidate, letters: letters) {
+      return compoundSplitSubjects.contains(left.lowercased())
+    }
+    let special: Set<Character> = ["ä", "ö", "ü", "ß"]
+    let typed = Set(word.lowercased())
+    return candidate.lowercased().contains { special.contains($0) && !typed.contains($0) }
+      && !transcriptions(of: word).isEmpty
+  }
+
   // The keyboard's own letter rows (KeyboardViewController.letterRows), centred as drawn:
   // the middle row half a key in, the bottom row a whole key in (shift sits beside it).
   private static let keyRows: [(keys: String, offset: Double)] = [
