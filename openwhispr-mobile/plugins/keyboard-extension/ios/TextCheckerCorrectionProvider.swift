@@ -170,15 +170,25 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
       : nil
     guard !stop() else { return [] }
     let sentence = code.map { code in installed.filter { $0.code == code } } ?? installed
-    guard let swap = KeyboardCorrectionRules.twoLetterSwap(of: word, sentence: sentence, selected: installed),
-          sentence.contains(where: { language in
-            !stop() && byCode[language.code].map { isKnown(swap.lowercased(), in: $0) } == true }),
-          !stop() else {
-      log.info("Autocorrection swap skipped: sentenceLanguage=\(code != nil, privacy: .public)")
+    let knownInSentence: (String) -> Bool = { candidate in
+      sentence.contains { language in
+        !self.stop() && byCode[language.code].map { self.isKnown(candidate.lowercased(), in: $0) } == true
+      }
+    }
+    if let swap = KeyboardCorrectionRules.twoLetterSwap(of: word, sentence: sentence, selected: installed),
+       knownInSentence(swap), !stop() {
+      log.info("Autocorrection swap: sentenceLanguage=\(code != nil, privacy: .public)")
+      return [swap]
+    }
+    // A slip only for a word no selected dictionary knows (`km`, `ca` stay).
+    guard !stop(), let slip = KeyboardCorrectionRules.twoLetterSlip(of: word, sentence: sentence, selected: installed),
+          dictionaries.allSatisfy({ !stop() && !isKnown(word.lowercased(), in: $0) }),
+          knownInSentence(slip), !stop() else {
+      log.info("Autocorrection two-letter skipped: sentenceLanguage=\(code != nil, privacy: .public)")
       return []
     }
-    log.info("Autocorrection swap: sentenceLanguage=\(code != nil, privacy: .public)")
-    return [swap]
+    log.info("Autocorrection two-letter slip: sentenceLanguage=\(code != nil, privacy: .public)")
+    return [slip]
   }
 
   private func suggestions(for word: String, using dictionaries: [String]) -> [String] {

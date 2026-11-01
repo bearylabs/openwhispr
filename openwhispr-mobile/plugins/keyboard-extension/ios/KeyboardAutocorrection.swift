@@ -54,7 +54,9 @@ struct KeyboardCorrectionLanguage: Equatable {
                            twoLetterWords: ["ab", "ah", "am", "an", "da", "du", "eh", "er", "es", "ha",
                                             "im", "in", "ja", "je", "na", "ne", "nö", "ob", "oh", "ok",
                                             "so", "um", "wo", "zu", "äh"],
-                           keptTwoLetterWords: ["hä", "ma", "ey", "yo", "ui", "en", "ho"])
+                           keptTwoLetterWords: ["hä", "ma", "ey", "yo", "ui", "en", "ho", "km", "zb", "dh",
+                                                "ca", "jo", "mo", "di", "sa", "st", "nr", "hm", "mh",
+                                                "eu", "ex", "co"])
   static let english = Self(code: "en", dictionaries: ["en_US", "en-US", "en_GB", "en-GB", "en"],
                             letters: latin,
                             twoLetterWords: ["ah", "am", "an", "as", "at", "be", "by", "do", "eh", "go",
@@ -62,7 +64,8 @@ struct KeyboardCorrectionLanguage: Equatable {
                                              "of", "oh", "ok", "on", "or", "so", "to", "uh", "um", "up",
                                              "us", "we"],
                             keptTwoLetterWords: ["ad", "em", "ew", "ho", "ma", "ow", "pa", "ta", "ya",
-                                                 "ye", "yo", "ox", "mu", "re"])
+                                                 "ye", "yo", "ox", "mu", "re", "hm", "mh", "st", "co",
+                                                 "ex", "eu", "id", "uk"])
   /// Adding a language: an entry here, its code in the app's list, and tests.
   static let all = [german, english]
   static let defaultSelection = [german, english]
@@ -146,6 +149,37 @@ enum KeyboardCorrectionRules {
     guard selected.allSatisfy({ !$0.twoLetterWords.contains(typed) && !$0.keptTwoLetterWords.contains(typed) }),
           sentence.contains(where: { $0.twoLetterWords.contains(swap) }) else { return nil }
     return swapped(word)
+  }
+
+  /// The word with one letter on a neighbouring key (`ia` → `is`, `ja`, …), the capital kept.
+  static func twoLetterSlips(of word: String) -> [String] {
+    let characters = Array(word)
+    let titleCase = word != word.lowercased()
+    var result: [String] = []
+    for index in characters.indices {
+      for neighbor in (keyNeighbors[Character(characters[index].lowercased())] ?? []).sorted() {
+        var variant = characters
+        variant[index] = index == 0 && titleCase ? Character(neighbor.uppercased()) : neighbor
+        result.append(String(variant))
+      }
+    }
+    return result
+  }
+
+  /// A two-letter word with one neighbouring-key slip (`ia` → `is` in an English sentence,
+  /// `zi` → `zu`), or nil: exactly one of its slips must be a common two-letter word of the
+  /// sentence's language (of any selected one when the sentence has none; `ia` at a sentence
+  /// start, `is` or `ja`, stays), and the typed word none of any selected language. The provider
+  /// also requires that no selected dictionary knows the typed word.
+  static func twoLetterSlip(of word: String, sentence: [KeyboardCorrectionLanguage],
+                            selected: [KeyboardCorrectionLanguage]) -> String? {
+    let typed = word.lowercased()
+    guard selected.allSatisfy({ !$0.twoLetterWords.contains(typed) && !$0.keptTwoLetterWords.contains(typed) })
+    else { return nil }
+    let targets = Set(twoLetterSlips(of: word).filter { slip in
+      sentence.contains { $0.twoLetterWords.contains(slip.lowercased()) }
+    })
+    return targets.count == 1 ? targets.first : nil
   }
 
   /// Keeps `candidates` that aren't words German accepts only as a possible compound
@@ -527,10 +561,10 @@ enum KeyboardCorrectionRules {
   static func replacement(for word: String, suggestions: [String],
                           letters: Set<Character> = KeyboardCorrectionRules.defaultLetters,
                           rank: (String) -> Int? = { _ in nil }) -> String? {
-    // A two-letter word only ever becomes its swap (`mi` → `im`).
+    // A two-letter word only ever becomes its swap (`mi` → `im`) or a one-key slip (`ia` → `is`).
     if isSwappable(word, letters: letters) {
-      let swap = swapped(word)
-      return suggestions.contains(swap) ? swap : nil
+      let allowed = [swapped(word)] + twoLetterSlips(of: word)
+      return suggestions.first { allowed.contains($0) }
     }
     guard isWord(word, letters: letters) else { return nil }
     // A lowercase respelling may also come capitalised: German nouns (`strasse` → `Straße`).

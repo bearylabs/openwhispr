@@ -321,8 +321,9 @@ private enum KeyboardAutocorrectionTests {
     check("two-letter swap", KeyboardCorrectionRules.replacement(for: "mi", suggestions: ["im"]) == "im")
     check("two-letter swap keeps the capital first", KeyboardCorrectionRules.replacement(
       for: "Si", suggestions: ["Is"]) == "Is")
-    check("two-letter words get nothing but their swap", KeyboardCorrectionRules.replacement(
-      for: "qm", suggestions: ["am", "im"]) == nil)
+    check("two-letter words get nothing but their swap or a one-key slip", KeyboardCorrectionRules.replacement(
+      for: "qm", suggestions: ["im", "am"]) == "am" && KeyboardCorrectionRules.replacement(
+      for: "qm", suggestions: ["im"]) == nil)
     check("swapped", KeyboardCorrectionRules.swapped("os") == "so" && KeyboardCorrectionRules.swapped("Mi") == "Im")
     check("swappable", KeyboardCorrectionRules.isSwappable("mi") && KeyboardCorrectionRules.isSwappable("Os"))
     check("a double letter isn't swappable", !KeyboardCorrectionRules.isSwappable("aa"))
@@ -348,6 +349,25 @@ private enum KeyboardAutocorrectionTests {
         && swap(kept, sentence: [en]) == nil
         && KeyboardCorrectionRules.twoLetterSwap(of: kept, sentence: [en], selected: [en]) == nil)
     }
+    func slip(_ word: String, sentence: [KeyboardCorrectionLanguage] = [.german, .english]) -> String? {
+      KeyboardCorrectionRules.twoLetterSlip(of: word, sentence: sentence, selected: [de, en])
+    }
+    check("ia is is in an English sentence", slip("ia", sentence: [en]) == "is")
+    check("ia is ja in a German sentence", slip("ia", sentence: [de]) == "ja")
+    check("ia at a sentence start is ambiguous", slip("ia") == nil)
+    check("a slip keeps the capital", slip("Ia", sentence: [en]) == "Is" && slip("Zi", sentence: [de]) == "Zu")
+    check("zi is zu", slip("zi", sentence: [de]) == "zu")
+    check("qm is am", slip("qm") == "am")
+    check("several common slips stay", slip("ot", sentence: [en]) == nil)
+    check("no common slip stays", slip("qq") == nil && slip("xv") == nil)
+    for kept in ["km", "ca", "zb", "dh", "di", "mo", "sa", "st", "nr", "hm", "na", "on"] {
+      check("kept from slips: \(kept)", slip(kept) == nil && slip(kept, sentence: [de]) == nil
+        && slip(kept, sentence: [en]) == nil)
+    }
+    check("a two-letter word may become a one-key slip", KeyboardCorrectionRules.replacement(
+      for: "ia", suggestions: ["is"]) == "is")
+    check("a two-letter word never becomes a farther word", KeyboardCorrectionRules.replacement(
+      for: "ia", suggestions: ["in"]) == nil)
     check("a kept word is never a target", KeyboardCorrectionLanguage.all.allSatisfy {
       $0.keptTwoLetterWords.isDisjoint(with: $0.twoLetterWords) })
     check("every two-letter word is lowercase and two letters",

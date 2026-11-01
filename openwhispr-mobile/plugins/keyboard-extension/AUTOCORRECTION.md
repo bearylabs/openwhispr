@@ -98,8 +98,16 @@ has none; `KeyboardCorrectionLanguage.twoLetterWords`) and known to its dictiona
 word none of any selected language's. A dictionary knowing the typed word doesn't stop it
 (English knows `os`); the lists keep what people type (`na`, `eh`, `oh`, `on`, `no`), and
 `keptTwoLetterWords` protects further words that are no swap target themselves (`hä`, `ma`,
-`ta`, `ad`, `ow`, `ew`). Nothing else
-is proposed, so `qm` stays.
+`ta`, `ad`, `ow`, `ew`).
+
+Otherwise a two-letter word may become a word one neighbouring key away (`twoLetterSlip`):
+`ia` → `is` in an English sentence and `ja` in a German one, `qm` → `am`, `zi` → `zu`. Exactly
+one of its slips must be a common two-letter word of the sentence's language (of any selected
+one without a sentence language, so `ia` at a sentence start stays, being `is` or `ja`), the typed
+word must be in no list and unknown to every selected dictionary (`km`, `ca`, `zb`, `nr` stay,
+and are kept in the lists too). Nothing else is proposed for a two-letter word.
+
+
 
 ### Capitalised words German accepts as compounds
 
@@ -266,7 +274,8 @@ npm test -- --runInBand
    `Möglichkeiten`, `ichhabe` → `ich habe` (backspace → `ichhabe`); `dashaus` stays.
    At a sentence start, `Ichhabe` → `Ich habe` and `Moeglichkwitne` → `Möglichkeiten`;
    `Donaudampfschiff` stays. `Ichhaeb` → `Ich habe`, `ichhaeb` → `ich habe`. `os`, `mi`, `Os` → `so`, `im`, `So`;
-   `qm`, `am`, `na`, `on` stay.
+   `ia` → `is` in an English sentence, `ja` in a German one; `qm` → `am`; `am`, `na`, `on`,
+   `km`, `ca` stay.
 4. Notes, Messages and a Safari text area, with fast typing: no correction is better than one in
    the wrong place. Move the cursor, select text, switch fields, apps and keyboards: no stale
    replacement.
