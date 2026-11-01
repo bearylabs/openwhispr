@@ -43,7 +43,7 @@ Rebase a feature branch only when asked: disable ruleset 26306024
 
 - Smallest change in upstream's style; no unrelated edits; nothing fork-specific in app branches.
 - Behavior changes ship with tests. Change a test only for intended behavior. Never weaken the
-  security audit or skip assertions; if `tools/headless-keyboard.patch` stops applying, fix it.
+  security audit or skip assertions; if a `tools/headless-keyboard/*.patch` stops applying, fix it.
 - Before the upstream PR, `git diff upstream/main...<type>/<topic>` contains only the topic.
 
 ## Ask first

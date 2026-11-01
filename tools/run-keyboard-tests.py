@@ -7,6 +7,27 @@ import subprocess
 import sys
 import tempfile
 
+PLUGIN = Path('openwhispr-mobile/plugins/keyboard-extension')
+PATCHES = Path(__file__).with_name('headless-keyboard')
+# The minimal voice keyboard's harness drives its compact tone menu, which needs the headless
+# workarounds in minimal-keyboard.patch. base.patch is only for a harness that needs none of
+# them: no simulated control events (the headless runner has no event dispatch) and no Full
+# Access switch (its overlay hides the keys). Anything else is unknown and stops. The pick is
+# by content, never by which patch happens to apply, so a changed harness still fails closed.
+MINIMAL_KEYBOARD_MARKER = 'compactToneMenu'
+HEADLESS_SENSITIVE = ('sendActions(', 'fullAccess')
+
+
+def patch_for(plugin):
+    tests = (plugin / 'tests/KeyboardTouchTests.swift').read_text()
+    if MINIMAL_KEYBOARD_MARKER in tests:
+        return PATCHES / 'minimal-keyboard.patch'
+    found = [term for term in HEADLESS_SENSITIVE if term in tests]
+    if found:
+        sys.exit(f'Unknown keyboard harness (uses {", ".join(found)}): '
+                 'add or update a tools/headless-keyboard patch.')
+    return PATCHES / 'base.patch'
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -14,13 +35,13 @@ def main():
     parser.add_argument('--check-only', action='store_true')
     args = parser.parse_args()
     source = args.source.resolve()
-    relative = Path('openwhispr-mobile/plugins/keyboard-extension')
-    patch = Path(__file__).with_name('headless-keyboard.patch')
     # Copy only this self-contained native harness. Never patch the app checkout.
     with tempfile.TemporaryDirectory(prefix='openwhispr-tests-') as directory:
         root = Path(directory)
-        plugin = root / relative
-        shutil.copytree(source / relative, plugin)
+        plugin = root / PLUGIN
+        shutil.copytree(source / PLUGIN, plugin)
+        patch = patch_for(plugin)
+        print(f'Headless adapter: {patch.name}')
         for command in [
             ['git', 'apply', '--check', str(patch)],
             ['git', 'apply', str(patch)],
