@@ -1,20 +1,36 @@
 #!/usr/bin/env bash
-# openwhispr-tests-guard-v1
-# Branch safety only. Test changes and PR scope are reviewed manually.
+# openwhispr-fork-guard-v2
+# Local mirror of the fork's branch rules (RULES.md). GitHub's ruleset enforces them too.
 set -euo pipefail
 remote=${1:?}
 url=${2:?}
+zero=0000000000000000000000000000000000000000
+types='feat|fix|chore|docs|refactor|perf|test|ci|build'
+topic='[a-z0-9]+(-[a-z0-9]+)*'
+
+refuse() { echo "REFUSED: $*" >&2; exit 1; }
+
 case "$url" in
   *github.com[:/][Oo]pen[Ww]hispr/openwhispr*)
-    echo 'REFUSED: push to your fork, then open an upstream PR; direct upstream pushes are disabled.' >&2
-    exit 1 ;;
+    refuse 'push to your fork, then open an upstream PR; direct upstream pushes are disabled.' ;;
 esac
+
 while read -r local_ref local_sha remote_ref remote_sha; do
-  [[ "$local_sha" != 0000000000000000000000000000000000000000 ]] || continue
-  if [[ "$remote_ref" == refs/heads/main ]]; then
-    if [[ "$local_sha" != "$(git rev-parse upstream/main)" ]]; then
-      echo 'REFUSED: fork main must equal the fetched upstream/main.' >&2
-      exit 1
+  [[ "$local_sha" != "$zero" ]] || continue # deletions: the ruleset decides
+  branch=${remote_ref#refs/heads/}
+  if [[ "$branch" == main ]]; then
+    [[ "$local_sha" == "$(git rev-parse upstream/main)" ]] ||
+      refuse 'fork main must equal the fetched upstream/main.'
+  elif [[ "$branch" =~ ^($types)/$topic$ ]]; then
+    if [[ "$remote_sha" != "$zero" ]]; then
+      refuse "$branch changes only through a squash-merged PR from exp/$branch."
     fi
+    git merge-base --is-ancestor "$local_sha" upstream/main ||
+      refuse "create $branch from upstream/main; the work goes to exp/$branch."
+  elif [[ "$branch" =~ ^exp/($types)/$topic$ || "$branch" == dev-rules ||
+          "$branch" =~ ^(backup|pr-assets)/ ]]; then
+    :
+  else
+    refuse "branch name '$branch'; use <type>/<topic> or exp/<type>/<topic> (type: ${types//|/, })."
   fi
 done

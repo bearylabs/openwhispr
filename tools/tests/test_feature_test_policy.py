@@ -19,7 +19,7 @@ class ManualTestReviewTests(unittest.TestCase):
     push = safety.BranchSafetyTests.push
 
     def assert_allowed(self, sha):
-        pushed = self.push(sha, 'feat/product')
+        pushed = self.push(sha, 'exp/feat/product')
         self.assertEqual(pushed.returncode, 0, pushed.stderr)
         reviewed = subprocess.run([sys.executable, str(ROOT / 'tools/export-upstream.py'),
                                    '--source', sha, '--check-history'],

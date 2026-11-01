@@ -44,39 +44,48 @@ class BranchSafetyTests(unittest.TestCase):
         self.git('commit', '-qm', message)
         return self.git('rev-parse', 'HEAD')
 
-    def push(self, sha, branch, url='https://github.com/bearylabs/openwhispr.git'):
+    def push(self, sha, branch, url='https://github.com/bearylabs/openwhispr.git', remote_sha='0' * 40):
         return subprocess.run(['bash', str(ROOT / 'tools/pre-push'), 'origin', url],
                               cwd=self.root, text=True, capture_output=True,
-                              input=f'refs/heads/local {sha} refs/heads/{branch} {"0" * 40}\n')
+                              input=f'refs/heads/local {sha} refs/heads/{branch} {remote_sha}\n')
 
     def test_main_must_match_upstream(self):
         self.assertEqual(self.push(self.base, 'main').returncode, 0)
         self.assertNotEqual(self.push(self.feature, 'main').returncode, 0)
 
-    def test_feature_content_is_not_classified_by_the_hook(self):
-        self.assertEqual(self.push(self.feature, 'feat/keyboard').returncode, 0)
-        self.assertEqual(self.push(self.control, 'feat/keyboard').returncode, 0)
-        self.assertEqual(self.push(self.control, 'dev-rules').returncode, 0)
+    def test_experimental_branches_take_anything(self):
+        for sha in [self.feature, self.control]:
+            self.assertEqual(self.push(sha, 'exp/feat/keyboard').returncode, 0)
+            self.assertEqual(self.push(sha, 'exp/docs/keyboard', remote_sha=self.base).returncode, 0)
 
-    def test_history_is_not_classified_by_the_hook(self):
-        self.write('.github/workflows/minimal-keyboard-native-tests.yml', 'name: personal\n')
-        self.commit('add personal CI')
-        shutil.rmtree(self.root / '.github')
-        cleaned = self.commit('remove personal CI')
-        result = self.push(cleaned, 'feat/keyboard')
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(self.push(cleaned, 'backup/old-main').returncode, 0)
+    def test_protected_branch_is_created_from_upstream_only(self):
+        for kind in ['feat', 'fix', 'chore', 'docs', 'refactor', 'perf', 'test', 'ci', 'build']:
+            with self.subTest(kind=kind):
+                self.assertEqual(self.push(self.base, f'{kind}/keyboard').returncode, 0)
+                self.assertNotEqual(self.push(self.feature, f'{kind}/keyboard').returncode, 0)
 
-    def test_headless_markers_require_manual_review_not_hook_rejection(self):
-        self.write('openwhispr-mobile/plugins/keyboard-extension/tests/KeyboardTouchTests.swift',
-                   'static var fullAccess = true\n')
-        adapted = self.commit('headless adaptation')
-        self.assertEqual(self.push(adapted, 'feat/keyboard').returncode, 0)
+    def test_protected_branch_is_never_updated_directly(self):
+        result = self.push(self.feature, 'feat/keyboard', remote_sha=self.base)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('exp/feat/keyboard', result.stderr)
+
+    def test_infrastructure_and_storage_branches_are_free(self):
+        for branch in ['dev-rules', 'backup/old-main', 'pr-assets/keyboard']:
+            self.assertEqual(self.push(self.control, branch).returncode, 0)
+
+    def test_unknown_branch_names_are_refused(self):
+        for branch in ['keyboard', 'feature/keyboard', 'feat/Keyboard', 'feat/keyboard-',
+                       'feat/a/b', 'exp/keyboard', 'tests', 'feat/keyboard-experimental-v2_']:
+            with self.subTest(branch=branch):
+                self.assertNotEqual(self.push(self.base, branch).returncode, 0)
+
+    def test_deletions_are_left_to_the_ruleset(self):
+        self.assertEqual(self.push('0' * 40, 'feat/keyboard', remote_sha=self.base).returncode, 0)
 
     def test_direct_upstream_push_blocked(self):
         for url in ['https://github.com/OpenWhispr/openwhispr.git',
                     'git@github.com:OpenWhispr/openwhispr.git']:
-            self.assertNotEqual(self.push(self.feature, 'feat/keyboard', url).returncode, 0)
+            self.assertNotEqual(self.push(self.feature, 'exp/feat/keyboard', url).returncode, 0)
 
 
 if __name__ == '__main__':

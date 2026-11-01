@@ -7,7 +7,7 @@ if [[ -n "$(git config --get core.hooksPath || true)" ]]; then
   exit 1
 fi
 hook=$(git rev-parse --git-path hooks/pre-push)
-if [[ -e "$hook" ]] && ! grep -Eq 'openwhispr-(fork-)?tests-guard-v1' "$hook"; then
+if [[ -e "$hook" ]] && ! grep -Eq 'openwhispr-(fork-)?(tests-)?guard-v[0-9]+' "$hook"; then
   echo "Existing $hook is not ours; refusing to overwrite it." >&2
   exit 1
 fi
