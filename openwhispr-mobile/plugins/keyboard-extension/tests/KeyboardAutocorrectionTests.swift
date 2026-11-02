@@ -67,9 +67,9 @@ private enum KeyboardAutocorrectionTests {
       json: "{\"v\":1,\"personal\":[\"" + String(repeating: "a", count: KeyboardUserDictionary.maxBytes)
         + "\"]}").isEmpty)
 
-    let words = userDictionary(["Hrudek", "OpenWhispr", "kubectl", "New York", "Tim", "NASA",
+    let words = userDictionary(["Hrudek", "OpenWhispr", "kubectl", "New York", "Tim", "NASA", "iPhone", "KI",
                                 "GPT-6", "me@example.com", "Lennart"],
-                               shared: ["Kubernetes", "os"])
+                               shared: ["Kubernetes", "os", "HRUDEK"])
     check("protects in any case", words.protects("Hrudek") && words.protects("hrudek")
       && words.protects("openwhispr") && words.protects("Kubectl"))
     check("protects the words of a phrase", words.protects("york") && words.protects("New"))
@@ -81,7 +81,8 @@ private enum KeyboardAutocorrectionTests {
     let decomposed = userDictionary(["Sine\u{301}ad"])
     check("a decomposed entry protects the composed word", decomposed.protects("Sin\u{e9}ad")
       && decomposed.protects("sine\u{301}ad"))
-    check("İ is no word", !KeyboardUserDictionary.isLetterWord("İstanbul")
+    check("letters whose case expands are no word", !KeyboardUserDictionary.isLetterWord("İstanbul")
+      && !KeyboardUserDictionary.isLetterWord("ßtraße") && KeyboardUserDictionary.isLetterWord("Straße")
       && KeyboardUserDictionary.isLetterWord("Sin\u{e9}ad") && !KeyboardUserDictionary.isLetterWord("Sine\u{301}ad"))
     // Distinct letter-only words: the index in base 26, a to z.
     let many = (0..<(KeyboardUserDictionary.maxEntries + 1)).map { index -> String in
@@ -101,39 +102,78 @@ private enum KeyboardAutocorrectionTests {
       return dictionary.protects("Hrudek") && !dictionary.protects(String(repeating: "a", count: 65))
     }())
 
+    // 1. The entry's spelling for a word typed like it but for its case.
+    check("lowercase becomes the stored spelling", words.caseFix(for: "iphone") == "iPhone"
+      && words.caseFix(for: "openwhispr") == "OpenWhispr" && words.caseFix(for: "hrudek") == "Hrudek")
+    check("a sentence-start capital becomes the stored spelling", words.caseFix(for: "Iphone") == "iPhone")
+    check("short and all-caps entries fix case too", words.caseFix(for: "ki") == "KI"
+      && words.caseFix(for: "Ki") == "KI" && words.caseFix(for: "nasa") == "NASA")
+    check("the personal spelling wins over a shared one", words.caseFix(for: "hrudek") == "Hrudek")
+    check("a word already spelled so needs no fix", words.caseFix(for: "Hrudek") == nil
+      && words.caseFix(for: "KI") == nil)
+    check("an all-lowercase entry keeps what was typed", words.caseFix(for: "Kubectl") == nil
+      && words.caseFix(for: "kubectl") == nil)
+    check("phrase words get no case fix", words.caseFix(for: "york") == nil)
+    check("accented and long entries fix case",
+          userDictionary(["Sin\u{e9}ad"]).caseFix(for: "sin\u{e9}ad") == "Sin\u{e9}ad"
+            && userDictionary(["Donaudampfschifffahrtsgesellschaft"])
+              .caseFix(for: "donaudampfschifffahrtsgesellschaft") == "Donaudampfschifffahrtsgesellschaft")
+
+    // 3. A typo becomes an entry.
     check("a swap becomes the user's word", words.target(for: "Hrudke")?.word == "Hrudek")
     check("the stored spelling is kept", words.target(for: "openwhsipr")?.word == "OpenWhispr"
-      && words.target(for: "Openwhsipr")?.word == "OpenWhispr")
+      && words.target(for: "Openwhsipr")?.word == "OpenWhispr" && words.target(for: "iphnoe")?.word == "iPhone")
     check("title case capitalises a lowercase word", words.target(for: "Kubectk")?.word == "Kubectl"
       && words.target(for: "kubectk")?.word == "kubectl")
     check("a missing letter becomes the user's word", words.target(for: "Lenart")?.word == "Lennart")
-    check("three typed letters may become a four-letter word", userDictionary(["Hruk"]).target(for: "Hru")?.word == "Hruk"
-      && userDictionary(["Hruk"]).target(for: "Hr") == nil)
+    check("three-letter words count", words.target(for: "Tmi")?.word == "Tim"
+      && userDictionary(["Hruk"]).target(for: "Hru")?.word == "Hruk")
+    let pi = userDictionary(["Pi", "Hruk"])
+    check("a two-letter word gets the entry's case", pi.caseFix(for: "pi") == "Pi" && pi.caseFix(for: "Pi") == nil
+      && pi.protects("pi"))
+    check("a two-letter slip or swap becomes a two-letter entry", pi.target(for: "Po")?.word == "Pi"
+      && pi.target(for: "pu")?.word == "Pi" && userDictionary(["Qt"]).target(for: "tq")?.word == "Qt"
+      && pi.target(for: "Pk")?.word == "Pi")
+    check("common two-letter words never become an entry", pi.target(for: "ip") == nil
+      && userDictionary(["Om"]).target(for: "am") == nil && userDictionary(["Ka"]).target(for: "km") == nil)
+    check("two letters far apart are no target", pi.target(for: "Pa") == nil && pi.target(for: "xi") == nil)
+    check("two letters never reach longer entries", pi.target(for: "Hr") == nil
+      && words.target(for: "Ik") == nil)
+    check("three letters never become a two-letter entry", pi.target(for: "Pix") == nil)
+    check("all-caps and shared entries are targets", words.target(for: "Nass")?.word == "NASA"
+      && words.target(for: "Kubernetse")?.word == "Kubernetes")
+    check("phrase words are no target", words.target(for: "Yrok") == nil)
     check("far-away words are no target", words.target(for: "Hruxyz") == nil
-      && words.target(for: "Hdurke") == nil)
-    check("shared, short, all-caps and phrase words are no target",
-          words.target(for: "Kubernetse") == nil && words.target(for: "Tmi") == nil
-            && words.target(for: "NASS") == nil && words.target(for: "Yrok") == nil)
-    check("two equally close words are no target",
-          userDictionary(["Lennart", "Leonart"]).target(for: "Lenart") == nil)
-    check("a word whose capital expands is no target", userDictionary(["ßtraße"]).target(for: "ßtarße") == nil)
+      && words.target(for: "Hdurke") == nil && words.target(for: "Tmo") == nil)
+    check("five letters on allow more", userDictionary(["Sin\u{e9}ad"]).target(for: "Sinead")?.word == "Sin\u{e9}ad"
+      && userDictionary(["Hruk"]).target(for: "Hxuk") == nil)
+    check("long words are targets", userDictionary(["Donaudampfschifffahrtsgesellschaft"])
+      .target(for: "donaudampfschiffahrtsgesellschaft")?.word == "Donaudampfschifffahrtsgesellschaft")
+    check("two equally close words of a list are no target",
+          userDictionary(["Lennart", "Leonart"]).target(for: "Lenart") == nil
+            && userDictionary([], shared: ["Lennart", "Leonart"]).target(for: "Lenart") == nil)
+    check("a personal word wins over an equally close shared one",
+          userDictionary(["Lennart"], shared: ["Leonart"]).target(for: "Lenart")?.word == "Lennart"
+            && userDictionary(["Leonart"], shared: ["Lennart"]).target(for: "Lenart")?.word == "Leonart")
+    check("a closer shared word wins over a personal one",
+          userDictionary(["kubectls"], shared: ["kubectl"]).target(for: "kubectk")?.word == "kubectl")
     check("a scan out of time finds nothing", words.target(for: "Hrudke", shouldStop: { true }) == nil)
 
-    check("no ordinary pick: the user's word", KeyboardUserDictionary.resolve(
-      word: "Hrudke", ordinary: nil, target: ("Hrudek", 1)) == "Hrudek")
-    check("a strictly closer user's word wins", KeyboardUserDictionary.resolve(
-      word: "Hrudke", ordinary: "Hrude", target: ("Hrudek", 1)) == "Hrudek")
-    check("an equally close ordinary pick wins", KeyboardUserDictionary.resolve(
-      word: "nciht", ordinary: "nicht", target: ("Nicht", 1)) == "nicht")
-    check("a German respelling wins", KeyboardUserDictionary.resolve(
-      word: "strasse", ordinary: "Straße", target: ("Strasse", 0.1)) == "Straße")
-    check("a split counts its missing space", KeyboardUserDictionary.ordinaryCost(
-      of: "ich habe", for: "ichhabe") == KeyboardCorrectionRules.splitCost
-      && KeyboardUserDictionary.resolve(word: "ichhabe", ordinary: "ich habe", target: ("Ichhabee", 0.9)) == "Ichhabee"
-      && KeyboardUserDictionary.resolve(word: "ichhabe", ordinary: "ich habe", target: ("Ichhabee", 1)) == "ich habe")
+    let letters = KeyboardCorrectionRules.defaultLetters
+    check("the user's word wins over the ordinary pick", words.decide(
+      for: "Hrudke", letters: letters, misspelled: { true }, shouldStop: { false },
+      ordinary: { "Hrude" }) == "Hrudek")
+    check("the user's word wins over a German respelling", userDictionary(["Strasso"]).decide(
+      for: "strasse", letters: letters, misspelled: { true }, shouldStop: { false },
+      ordinary: { "Straße" }) == "Strasso")
     check("a known word never becomes the user's word", words.decide(
-      for: "Hrudke", letters: KeyboardCorrectionRules.defaultLetters, misspelled: { false },
-      shouldStop: { false }, ordinary: { nil }) == nil)
+      for: "Tom", letters: letters, misspelled: { false }, shouldStop: { false }, ordinary: { nil }) == nil)
+    check("a known word still gets the stored case", words.decide(
+      for: "iphone", letters: letters, misspelled: { false }, shouldStop: { false }, ordinary: { nil }) == "iPhone")
+    check("out of time, no user's word", words.decide(
+      for: "Hrudke", letters: letters, misspelled: { true }, shouldStop: { true }, ordinary: { nil }) == nil)
+    check("no target: the ordinary pick", words.decide(
+      for: "nciht", letters: letters, misspelled: { true }, shouldStop: { false }, ordinary: { "nicht" }) == "nicht")
 
     // Through the state machine, as the keyboard applies it.
     var protected = typed("nciht", document: document)
@@ -142,11 +182,36 @@ private enum KeyboardAutocorrectionTests {
     var protectedSwap = typed("os", document: document)
     check("a protected two-letter word isn't swapped", protectedSwap.0.correction(
       in: protectedSwap.1, provider: StubProvider(words: ["so"]), dictionary: words) == nil)
+    var caseOnly = typed("iphone", document: document)
+    let caseEdit = caseOnly.0.correction(in: caseOnly.1, provider: StubProvider(words: []), dictionary: words)
+    check("a word typed in lowercase gets the stored case", caseEdit?.replacement == "iPhone"
+      && caseEdit?.original == "iphone")
+    var acronym = typed("ki", document: document)
+    check("a two-letter word gets the stored case", acronym.0.correction(
+      in: acronym.1, provider: StubProvider(words: ["ik"]), dictionary: words)?.replacement == "KI")
+    var piCase = typed("pi", document: document)
+    check("pi gets the stored case", piCase.0.correction(
+      in: piCase.1, provider: StubProvider(words: ["ip"]), dictionary: pi)?.replacement == "Pi")
+    var piSlip = typed("po", document: document)
+    check("a two-letter slip becomes the user's word", piSlip.0.correction(
+      in: piSlip.1, provider: StubProvider(words: ["so"]), dictionary: pi)?.replacement == "Pi")
+    var long = typed("donaudampfschifffahrtsgesellschaft", document: document)
+    check("a word past twenty letters gets the stored case", long.0.correction(
+      in: long.1, provider: StubProvider(words: []),
+      dictionary: userDictionary(["Donaudampfschifffahrtsgesellschaft"]))?.replacement
+      == "Donaudampfschifffahrtsgesellschaft")
+    var longPlain = typed("donaudampfschifffahrtsgesellschaft", document: document)
+    check("past twenty letters nothing else is corrected", longPlain.0.correction(
+      in: longPlain.1, provider: StubProvider(words: ["x"]), dictionary: words) == nil)
+    var accented = typed("sin\u{e9}ad", document: document)
+    check("letters of other languages reach the dictionary", accented.0.correction(
+      in: accented.1, provider: StubProvider(words: []), dictionary: userDictionary(["Sin\u{e9}ad"]))?.replacement
+      == "Sin\u{e9}ad")
     var brand = typed("openwhsipr", document: document)
     check("a typo becomes a mixed-case user's word", brand.0.correction(
       in: brand.1, provider: StubProvider(words: []), dictionary: words)?.replacement == "OpenWhispr")
     var name = typed("Hrudke", document: document)
-    check("a typo becomes the user's name", name.0.correction(
+    check("the user's word wins over the provider's", name.0.correction(
       in: name.1, provider: StubProvider(words: ["Hrude"]), dictionary: words)?.replacement == "Hrudek")
     var short = typed("Hru", document: document)
     check("a three-letter typo becomes the user's word", short.0.correction(
@@ -154,6 +219,9 @@ private enum KeyboardAutocorrectionTests {
     var ordinary = typed("nciht", document: document)
     check("other words correct as before", ordinary.0.correction(
       in: ordinary.1, provider: StubProvider(), dictionary: words)?.replacement == "nicht")
+    var noDictionary = typed("donaudampfschifffahrtsgesellschaft", document: document)
+    check("without a dictionary long words stay out", noDictionary.0.correction(
+      in: noDictionary.1, provider: StubProvider(words: ["x"])) == nil)
   }
 
   static func main() {

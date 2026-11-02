@@ -694,7 +694,21 @@ private enum KeyboardTouchTests {
     controller.touchTestSetAutocorrectionWords { #"{"v":1,"personal":[],"shared":["OpenWhispr"]}"# }
     controller.touchTestTypeWord("openwhsipr")
     controller.touchTestTapSpace()
-    checks.check("a shared word is no target", TestEnvironment.proxy.documentContextBeforeInput == "openwhsipr ")
+    checks.check("a typo becomes a shared word", TestEnvironment.proxy.documentContextBeforeInput == "OpenWhispr ")
+    controller = keyboard()
+    controller.touchTestSetProvider(CorrectionStub(words: ["iphones"]))
+    controller.touchTestSetAutocorrectionWords { #"{"v":1,"personal":["iPhone"],"shared":[]}"# }
+    controller.touchTestTypeWord("iphone")
+    controller.touchTestTapSpace()
+    checks.check("a word gets the dictionary's case", TestEnvironment.proxy.documentContextBeforeInput == "iPhone ")
+    controller.touchTestTapDelete()
+    checks.check("the dictionary's case undoes", TestEnvironment.proxy.documentContextBeforeInput == "iphone")
+    controller = keyboard()
+    controller.touchTestSetProvider(CorrectionStub(words: ["Hrude"]))
+    controller.touchTestSetAutocorrectionWords { #"{"v":1,"personal":["Hrudek"],"shared":[]}"# }
+    controller.touchTestTypeWord("hrudke")
+    controller.touchTestTapSpace()
+    checks.check("the user's word wins over the system's", TestEnvironment.proxy.documentContextBeforeInput == "Hrudek ")
 
     controller = keyboard()
     controller.touchTestSetProvider(CorrectionStub(words: ["funktioniert"]))

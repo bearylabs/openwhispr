@@ -134,9 +134,9 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     return suggestionsWithinDeadline(for: word, before: before)
   }
 
-  /// The app's dictionary first (`KeyboardUserDictionary.decide`): a word in it is left alone,
-  /// and a misspelled word may become one of the user's own words. The scan shares the press's
-  /// time budget with the ordinary search that follows.
+  /// The app's dictionary first (`KeyboardUserDictionary.decide`): an entry's spelling, a word
+  /// it protects, or a misspelled word becoming one of its words, ahead of anything iOS proposes.
+  /// The scan shares the press's time budget with the ordinary search that follows.
   func replacement(for word: String, before: String, dictionary: KeyboardUserDictionary) -> String? {
     let ordinary = {
       KeyboardCorrectionRules.replacement(
@@ -145,16 +145,16 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     }
     startDeadline()
     guard !dictionary.isEmpty else { return ordinary() }
-    if dictionary.protects(word) {
-      log.info("Autocorrection skipped: word in the user's dictionary")
-      return nil
-    }
     var ordinaryPick: String?
     let pick = dictionary.decide(
       for: word, letters: letters,
+      // Unknown to every selected dictionary, or German accepts it only as a possible compound
+      // (`Hrudke` at a sentence start).
       misspelled: {
+        guard !dictionaries.isEmpty else { return false }
         let range = NSRange(word.startIndex..<word.endIndex, in: word)
-        return !dictionaries.isEmpty && dictionaries.allSatisfy { misspelledRange(of: word, in: $0) == range }
+        return dictionaries.allSatisfy { misspelledRange(of: word, in: $0) == range }
+          || acceptedOnlyAsCompound(word, in: dictionaries)
       },
       shouldStop: { self.stop() },
       ordinary: {

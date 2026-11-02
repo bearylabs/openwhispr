@@ -131,38 +131,67 @@ extension KeyboardCorrectionProvider {
 /// `keyboard_autocorrection_words`, `{"v":1,"personal":[…],"shared":[…]}`, written by
 /// `src/lib/keyboardAutocorrectionWords.ts` (words the user added, words OpenWhispr learned from
 /// their corrections, and the team's shared words that apply). Bounds are enforced again here.
+/// The user's dictionary comes before the system's: it is where they put what iOS gets wrong.
 ///
-/// - Every word, and every word of a phrase of up to four words, is protected: typed in any
-///   case, it is never corrected (`Hrudek`, `kubectl`, `New York`).
-/// - A misspelled word may become one of the user's own single words (personal, not shared) of
-///   4 to 20 letters, not all capitals, when it is one plausible mistake away (`maxTargetCost`)
-///   and no other of their words is as close (`target(for:)`). It wins over the ordinary pick
-///   only when strictly closer, and never over a German respelling (`resolve`).
+/// In this order (`decide`):
+/// 1. A word typed like a single-word entry but for its case gets the entry's spelling
+///    (`iphone`, `Iphone` → `iPhone`; `ki` → `KI`), even when iOS knows it. An all-lowercase
+///    entry keeps what was typed (`Kubectl` at a sentence start stays).
+/// 2. Every word, and every word of a phrase of up to four words, is otherwise never corrected
+///    (`Hrudek`, `york` from `New York`).
+/// 3. A word iOS doesn't know (`misspelled`) becomes the closest single-word entry within
+///    `maxTargetCost`, ahead of every ordinary candidate (`Hrudke` → `Hrudek`). A two-letter
+///    word becomes a two-letter entry only by a swap or a key beside the right one (`Po`, `Pu` →
+///    `Pi`), and never when it is a common two-letter word of a language (`so`, `ip`, `km`). A personal entry wins over an equally close shared one; two equally close
+///    entries of the same list are no pick, and the ordinary correction decides.
 struct KeyboardUserDictionary {
   static let empty = KeyboardUserDictionary()
   /// UTF-8 bytes of the whole value; the app writes at most 64 KiB.
   static let maxBytes = 128 * 1024
   static let maxEntries = 2_000
-  /// UTF-16 code units per entry, as the app counts them.
+  /// UTF-16 code units per entry, as the app counts them; also the longest word tracked.
   static let maxEntryLength = 64
   static let maxPhraseWords = 4
-  static let targetLengths = 4...20
-  /// Typed words a scan looks at: three letters may be a four-letter word missing one.
-  static let typedLengths = 3...20
-  /// One swap, missing or extra letter, wrong key beside the right one, letter for its umlaut,
-  /// or a few ae/oe/ue/ss typed for ä/ö/ü/ß.
-  static let maxTargetCost = 1.5
+  /// Entries a typo may become have two letters or more; a two-letter entry only takes a
+  /// two-letter typo (`twoLetterCost`), longer typed words need entries of three or more.
+  static let minTargetLength = 2
 
-  struct Target: Equatable {
-    /// As the user stored it (`OpenWhispr`).
-    let spelling: String
-    let lower: String
+  /// Two-letter words people type on purpose; never turned into an entry.
+  static let commonTwoLetterWords: Set<String> = KeyboardCorrectionLanguage.all.reduce(into: []) {
+    $0.formUnion($1.twoLetterWords)
+    $0.formUnion($1.keptTwoLetterWords)
   }
 
-  /// Lowercase words that are never corrected.
+  /// A two-letter typo's weight to a two-letter entry: 1 for its letters swapped, a neighbouring
+  /// key's cost (`substitutionCost`) for one wrong letter beside the right one; nil otherwise.
+  static func twoLetterCost(from typed: String, to entry: String) -> Double? {
+    let a = Array(typed), b = Array(entry)
+    guard a.count == 2, b.count == 2, a != b else { return nil }
+    if a[0] == b[1], a[1] == b[0] { return 1 }
+    let wrong = (0..<2).filter { a[$0] != b[$0] }
+    guard wrong.count == 1, KeyboardCorrectionRules.keyNeighbors[a[wrong[0]]]?.contains(b[wrong[0]]) == true
+    else { return nil }
+    return KeyboardCorrectionRules.substitutionCost(a[wrong[0]], b[wrong[0]])
+  }
+
+  /// The edit weight a typo may need to become an entry: one mistake for three or four letters
+  /// (a key beside the right one, a swap, a missing or extra letter), 2.5 from five (e.g. a slip
+  /// and a swap, or a wrong far-away key; ae/oe/ue/ss for ä/ö/ü/ß costs little).
+  static func maxTargetCost(forLength length: Int) -> Double { length <= 4 ? 1.5 : 2.5 }
+
+  struct Entry: Equatable {
+    /// As the user stored it (`iPhone`).
+    let spelling: String
+    let lower: String
+    let personal: Bool
+  }
+
+  /// Lowercase words that are never corrected (single words and phrase words).
   private(set) var protected: Set<String> = []
-  /// The user's own words a typo may become, by the length of their lowercase form.
-  private(set) var targetsByLength: [Int: [Target]] = [:]
+  /// Single-word entries by their lowercase spelling, the first (personal) one of each.
+  private(set) var entries: [String: Entry] = [:]
+  /// Entries a typo may become, by the length of their lowercase spelling.
+  private(set) var targetsByLength: [Int: [Entry]] = [:]
   var isEmpty: Bool { protected.isEmpty }
 
   init() {}
@@ -172,11 +201,11 @@ struct KeyboardUserDictionary {
     guard let raw, !raw.isEmpty, raw.utf8.count <= Self.maxBytes,
           let object = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
           (object["v"] as? Int) == 1 else { return }
-    var entries = 0
+    var count = 0
     for (key, personal) in [("personal", true), ("shared", false)] {
       for case let entry as String in object[key] as? [Any] ?? [] {
-        guard entries < Self.maxEntries else { return }
-        entries += 1
+        guard count < Self.maxEntries else { return }
+        count += 1
         add(entry, personal: personal)
       }
     }
@@ -189,96 +218,95 @@ struct KeyboardUserDictionary {
     // Technical strings (digits, punctuation, addresses) protect nothing.
     guard (1...Self.maxPhraseWords).contains(words.count), words.allSatisfy(Self.isLetterWord) else { return }
     for word in words { protected.insert(word.lowercased()) }
-    guard personal, words.count == 1, let target = Self.target(entry),
-          !(targetsByLength[target.lower.count] ?? []).contains(where: { $0.lower == target.lower }) else { return }
-    targetsByLength[target.lower.count, default: []].append(target)
+    let lower = entry.lowercased()
+    guard words.count == 1, entries[lower] == nil, lower.count == entry.count else { return }
+    let item = Entry(spelling: entry, lower: lower, personal: personal)
+    entries[lower] = item
+    if lower.count >= Self.minTargetLength { targetsByLength[lower.count, default: []].append(item) }
   }
 
-  /// Precomposed letters whose lowercase is one letter too, so the edit cost and the case
-  /// helpers see the same characters (`İ`, which lowercases to two, is refused).
+  /// Precomposed letters whose lowercase and capital are one letter each, so the edit cost and
+  /// the case helpers see the same characters (`İ` and `ß`, whose case expands, are refused at
+  /// the start, `İ` anywhere).
   static func isLetterWord(_ word: String) -> Bool {
-    !word.isEmpty && word.allSatisfy { character in
+    guard let first = word.first, String(first).uppercased().unicodeScalars.count == 1 else { return false }
+    return word.allSatisfy { character in
       guard character.unicodeScalars.count == 1, let scalar = character.unicodeScalars.first else { return false }
       return CharacterSet.letters.contains(scalar)
         && String(character).lowercased().unicodeScalars.count == 1
     }
   }
 
-  private static func target(_ word: String) -> Target? {
+  /// A typed word the dictionary may act on, beyond what ordinary correction tracks: letters of
+  /// any language, lowercase or with a capital first letter, up to `maxEntryLength`.
+  static func isInput(_ word: String) -> Bool {
     let lower = word.lowercased()
-    guard targetLengths.contains(lower.count), lower.count == word.count,
-          word != word.uppercased(),
-          let first = word.first, String(first).uppercased().unicodeScalars.count == 1 else { return nil }
-    return Target(spelling: word, lower: lower)
+    return (2...maxEntryLength).contains(word.count) && isLetterWord(word) && lower.count == word.count
+      && (word == lower || word == KeyboardCorrectionRules.capitalized(lower))
   }
 
-  func protects(_ word: String) -> Bool {
-    protected.contains(word.precomposedStringWithCanonicalMapping.lowercased())
+  private static func key(_ word: String) -> String { word.precomposedStringWithCanonicalMapping.lowercased() }
+
+  func protects(_ word: String) -> Bool { protected.contains(Self.key(word)) }
+
+  /// The entry's spelling for a word typed like it but for its case; nil when there is none,
+  /// it is all lowercase, or the word already reads so.
+  func caseFix(for word: String) -> String? {
+    guard let entry = entries[Self.key(word)], entry.spelling != entry.lower,
+          entry.spelling != word else { return nil }
+    return entry.spelling
   }
 
-  /// The user's word closest to a typed word, within `maxTargetCost`; nil when none is, when
-  /// two different words are equally close, or when `shouldStop` cuts the scan short. Typed
-  /// title case capitalises a lowercase word.
+  /// The closest entry to a typed word within `maxTargetCost`, a personal one first at equal
+  /// cost; nil when none is, when two of the winning list are equally close, or when
+  /// `shouldStop` cuts the scan short. Typed title case capitalises a lowercase entry.
   func target(for word: String, shouldStop: () -> Bool = { false }) -> (word: String, cost: Double)? {
-    let lower = word.lowercased()
+    let lower = Self.key(word)
     let length = lower.count
-    guard !targetsByLength.isEmpty, Self.typedLengths.contains(length) else { return nil }
-    var best: (target: Target, cost: Double)?
+    guard !targetsByLength.isEmpty, Self.isInput(word), length >= Self.minTargetLength,
+          length > 2 || !Self.commonTwoLetterWords.contains(lower) else { return nil }
+    let budget = Self.maxTargetCost(forLength: length)
+    // An extra letter costs at least 1.5, a missing one 0.3 (a pair typed for ä/ö/ü).
+    let longer = Int(budget / KeyboardCorrectionRules.insertDeleteCost + 1e-9)
+    let shorter = Int(budget / KeyboardCorrectionRules.umlautTranscriptionCost + 1e-9)
+    let lengths = length == 2 ? 2...2 : max(3, length - shorter)...(length + longer)
+    var best: (entry: Entry, cost: Double)?
     var tied = false
-    // A target is at most one letter longer (an insertion costs 1.5) or two shorter (pairs
-    // typed for ä/ö/ü/ß); `editCost` rejects the rest.
-    for targetLength in (length - 2)...(length + 1) {
-      for target in targetsByLength[targetLength] ?? [] {
+    for targetLength in lengths {
+      for entry in targetsByLength[targetLength] ?? [] {
         if shouldStop() { return nil }
-        guard let cost = KeyboardCorrectionRules.editCost(from: lower, to: target.lower),
-              cost <= Self.maxTargetCost + 1e-9 else { continue }
-        if let current = best, abs(current.cost - cost) < 1e-9 {
-          tied = true
-        } else if best == nil || cost < best!.cost {
-          best = (target, cost)
+        let measured = length == 2
+          ? Self.twoLetterCost(from: lower, to: entry.lower)
+          : KeyboardCorrectionRules.editCost(from: lower, to: entry.lower)
+        guard let cost = measured, cost <= budget + 1e-9 else { continue }
+        guard let current = best else { best = (entry, cost); continue }
+        if cost < current.cost - 1e-9 || (abs(cost - current.cost) < 1e-9 && entry.personal && !current.entry.personal) {
+          best = (entry, cost)
           tied = false
+        } else if abs(cost - current.cost) < 1e-9 && entry.personal == current.entry.personal {
+          tied = true
         }
       }
     }
     guard let best, !tied, !shouldStop() else { return nil }
-    let typedTitleCase = word != lower
-    let spelling = typedTitleCase && best.target.spelling == best.target.lower
-      ? KeyboardCorrectionRules.capitalized(best.target.spelling) : best.target.spelling
+    let typedTitleCase = word != word.lowercased()
+    let spelling = typedTitleCase && best.entry.spelling == best.entry.lower
+      ? KeyboardCorrectionRules.capitalized(best.entry.spelling) : best.entry.spelling
     return (spelling, best.cost)
   }
 
-  /// Whether the dictionary leaves `word` alone or makes it one of the user's words; otherwise
-  /// `ordinary()` decides. `misspelled` says whether every selected dictionary flags the whole
-  /// word: only such a word may become a user's word, so a known word never does.
+  /// What the dictionary makes of `word`; `ordinary()` decides only when it has nothing to say.
+  /// `misspelled` says whether iOS doesn't know the word: only such a word may become an entry.
   func decide(for word: String, letters: Set<Character>, misspelled: () -> Bool,
               shouldStop: () -> Bool, ordinary: () -> String?) -> String? {
+    if let fixed = caseFix(for: word) { return fixed }
     if protects(word) { return nil }
-    let target = KeyboardCorrectionRules.isWord(word, letters: letters) && misspelled()
-      ? self.target(for: word, shouldStop: shouldStop) : nil
-    return Self.resolve(word: word, ordinary: ordinary(), target: target)
-  }
-
-  /// The user's word wins when there is no ordinary pick, or when it is strictly closer to the
-  /// typed word than that pick, unless the pick is the word's German respelling (`schoen` →
-  /// `schön`, `strasse` → `Straße`).
-  static func resolve(word: String, ordinary: String?, target: (word: String, cost: Double)?) -> String? {
-    guard let target else { return ordinary }
-    guard let ordinary else { return target.word }
-    let respellings = Set(KeyboardCorrectionRules.transcriptions(of: word).flatMap { respelling in
-      [respelling.word, KeyboardCorrectionRules.capitalized(respelling.word)]
-    })
-    if respellings.contains(ordinary) { return ordinary }
-    return target.cost < ordinaryCost(of: ordinary, for: word) - 1e-9 ? target.word : ordinary
-  }
-
-  /// The ordinary pick's edit cost as `KeyboardCorrectionRules.replacement` counts it: two
-  /// words as their joined spelling plus the missing space.
-  static func ordinaryCost(of ordinary: String, for word: String) -> Double {
-    let lower = word.lowercased()
-    let split = ordinary.contains(" ")
-    let candidate = ordinary.replacingOccurrences(of: " ", with: "").lowercased()
-    let cost = candidate == lower ? 0 : KeyboardCorrectionRules.editCost(from: lower, to: candidate) ?? .infinity
-    return cost + (split ? KeyboardCorrectionRules.splitCost : 0)
+    if let target = target(for: word, shouldStop: { shouldStop() }), misspelled(), !shouldStop() {
+      return target.word
+    }
+    let ordinaryInput = KeyboardCorrectionRules.isWord(word, letters: letters)
+      || KeyboardCorrectionRules.isSwappable(word, letters: letters)
+    return ordinaryInput ? ordinary() : nil
   }
 }
 
@@ -972,7 +1000,8 @@ struct KeyboardAutocorrection {
       }
     }
     word += text
-    guard word.count <= 20 else { invalidate(); return }
+    // Ordinary correction stops at 20 letters (`isWord`); the app's dictionary goes further.
+    guard word.count <= KeyboardUserDictionary.maxEntryLength else { invalidate(); return }
     expected = context.inserting(text)
   }
 
@@ -984,7 +1013,8 @@ struct KeyboardAutocorrection {
     let letters = provider.letters
     guard Self.delimiters.contains(delimiter), expected != nil,
           KeyboardCorrectionRules.isWord(word, letters: letters)
-            || KeyboardCorrectionRules.isSwappable(word, letters: letters),
+            || KeyboardCorrectionRules.isSwappable(word, letters: letters)
+            || (!dictionary.isEmpty && KeyboardUserDictionary.isInput(word)),
           (context.after ?? "").isEmpty || context.after?.first?.isWhitespace == true,
           let replacement = provider.replacement(
             for: word, before: String((context.before ?? "").dropLast(word.count)),

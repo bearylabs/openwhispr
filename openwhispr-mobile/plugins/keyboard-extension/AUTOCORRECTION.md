@@ -47,29 +47,35 @@ autocorrection.
 - The keyboard reads it at every correction, only with Full Access, and parses it again only when
   it changed (`KeyboardUserDictionary`, which enforces the bounds again and drops it with the text
   checker on a memory warning or when the keyboard disappears).
-- **Protected words.** A word typed in any case that is in the dictionary, or a word of a phrase
-  of up to four words in it, is never corrected: no swap, slip, respelling or capital (`Hrudek`,
-  `kubectl`, `os` in a team list). Entries with digits or punctuation (`GPT-6`, addresses)
-  protect nothing. An exact word keeps the case it was typed in.
-- **The user's words as corrections.** A word every selected dictionary flags may become one of
-  the user's own words (personal, never shared): 4 to 20 precomposed letters whose lowercase and
-  capital are single letters, not all capitals, one plausible mistake away (edit cost at most
-  1.5: a swap, a missing or extra letter, a key beside the right one, a letter for its umlaut, or
-  ae/oe/ue/ss), and no other of their words as close (`openwhsipr` → `OpenWhispr`, `Hrudke` →
-  `Hrudek`, `kubectk` → `kubectl`, `Kubectk` → `Kubectl`). It is typed as stored, capitalised
-  when the typed word was. It replaces the ordinary pick only when strictly closer to the typed
-  word (a split counts its missing space), and never a German respelling (`strasse` → `Straße`).
-  The scan shares the press's 100 ms; cut short, it gives nothing. An accent the user left out
-  costs like any other letter, so `Sinead` doesn't become `Sinéad`.
+  The dictionary comes before the system's dictionaries, since it is where the user puts what iOS
+  gets wrong (`KeyboardUserDictionary.decide`), in this order:
 
-### Adding a language
+1. **Its spelling.** A word typed like a single-word entry but for its case gets the entry's
+   spelling, even when iOS knows the word (`iphone`, `Iphone` → `iPhone`; `ki` → `KI`; `pi` → `Pi`;
+   `hrudek` → `Hrudek`). An all-lowercase entry keeps what was typed (`Kubectl` at a sentence
+   start stays); a phrase's words get no case (`york` stays).
+2. **Protected words.** Every other word in the dictionary, or a word of a phrase of up to four
+   words in it, is never corrected: no swap, slip, respelling or capital (`kubectl`, `os` in a
+   team list). Entries with digits or punctuation (`GPT-6`, addresses) protect nothing.
+3. **Typos into its words.** A word iOS doesn't know (every selected dictionary flags it, or German
+   accepts it only as a possible compound, like `Hrudke` at a sentence start) becomes the closest
+   single-word entry, ahead of every ordinary candidate, German
+   respellings and missing spaces included (`openwhsipr` → `OpenWhispr`, `Hrudke` → `Hrudek`,
+   `iphnoe` → `iPhone`, `Tmi` → `Tim`, `Sinead` → `Sinéad`). Within an edit weight of 1.5 for
+   three or four letters (one mistake: a key beside the right one, a swap, a missing or extra
+   letter) and 2.5 from five (a slip and a swap, a wrong far-away key, a missing letter and a
+   slip; ae/oe/ue/ss for ä/ö/ü/ß cost little). A personal entry wins over an equally close
+   shared one; two equally close entries of the same list are no pick, and ordinary correction
+   decides. It is typed as stored, capitalised when the typed word was and the entry is
+   lowercase. A word iOS knows stays (`Tom`, with `Tim` in the dictionary). The scan shares the
+   press's 100 ms; cut short, it gives nothing.
 
-1. Add a `KeyboardCorrectionLanguage` in `ios/KeyboardAutocorrection.swift`: its code, its
-   preferred `UITextChecker` identifiers and the lowercase letters its words may use (e.g.
-   `é è ê ç …` for French), and list it in `all`.
-2. Add the same code and label to `KEYBOARD_AUTOCORRECTION_LANGUAGES` in
-   `src/lib/keyboardAutocorrection.ts`. A Jest test fails while the two lists differ.
-3. Add rule tests with the language's letters and check it on an iPhone with that dictionary.
+Entries may be any letters (`é`, Cyrillic) whose lowercase and capital are single letters, up to
+64 characters: the keyboard tracks words that long for the dictionary, while ordinary correction
+still stops at twenty letters and the selected languages' letters. A two-letter word becomes a
+two-letter entry only by its letters swapped or one key beside the right one (`Po`, `pu`, `Pk` →
+`Pi`), never when it is one of the languages' common or kept two-letter words (`so`, `am`, `ip`,
+`km`); a longer word never becomes a two-letter entry, nor a two-letter word a longer one.
 
 ## What gets corrected
 
@@ -229,7 +235,7 @@ Swift rules with a stand-in dictionary. Without Apple's own proposals (worst cas
 
 - Digits, punctuation, underscores, mixed or all caps, URL- and email-like tokens, emoji,
   decomposed combining sequences, one-letter words, two-letter words except for their swap
-  (below), words over twenty letters, and words following
+  (below), words over twenty letters (except for the app's dictionary), and words following
   punctuation.
 - Fields other than default text fields: secure fields, fields hiding their text,
   `.autocorrectionType == .no`, URL, email, ASCII-only, numeric and other specialised keyboard
@@ -282,8 +288,9 @@ python3 plugins/keyboard-extension/tests/run-keyboard-touch-tests.py
 npm test -- --runInBand
 ```
 
-- `tests/KeyboardAutocorrectionTests.swift`: the app's dictionary (parsing, bounds, protection,
-  targets, ties, the competition with the ordinary pick and the state machine's edit), language selection, sentence language, scoring,
+- `tests/KeyboardAutocorrectionTests.swift`: the app's dictionary (parsing, bounds, its
+  spelling, protection, targets, budgets, ties between and within its lists, precedence over the
+  ordinary pick, long and accented words, and the state machine's edit), language selection, sentence language, scoring,
   key neighbours, generated candidates, respellings, completion prefixes, missing spaces,
   excluded tokens, Unicode, context invalidation, delayed reports, document boundaries,
   own-change acknowledgements and undo (including the 3-second window). Jest runs it when `swiftc` is available and skips it
@@ -292,7 +299,8 @@ npm test -- --runInBand
   the Settings switch, English, neighbouring-key slips, umlaut respelling, noun capitalisation,
   long words, missing spaces, undo and its window, recorrection suppression, double space,
   silent hosts, cursor changes, field guards, transcript exclusion, held delete, and the app's
-  dictionary (a protected word, a typo to the user's word and its undo, a shared word as no target).
+  dictionary (a protected word, a typo to the user's or a shared word and its undo, the
+  dictionary's case and its undo, the user's word over the system's).
 - Jest: the settings screen and Preferences row, the App Group mirror (dictionary included:
   serialization, bounds, change tracking, failed writes, the account reset), the language list kept in
   step with the keyboard's, and source registration in `withKeyboardExtension.js`.
@@ -318,8 +326,9 @@ npm test -- --runInBand
 4. Notes, Messages and a Safari text area, with fast typing: no correction is better than one in
    the wrong place. Move the cursor, select text, switch fields, apps and keyboards: no stale
    replacement.
-5. Add `Hrudek` and `OpenWhispr` to the dictionary: `Hrudek` + space stays, `Hrudke` → `Hrudek`,
-   `openwhsipr` → `OpenWhispr` (backspace → `openwhsipr`). Remove them: `Hrudek` is corrected
+5. Add `Hrudek`, `OpenWhispr` and `iPhone` to the dictionary: `Hrudek` + space stays, `Hrudke`
+   and `hrudke` → `Hrudek`, `openwhsipr` → `OpenWhispr` (backspace → `openwhsipr`), `iphone` and
+   `Iphone` → `iPhone`; `Tom` stays with `Tim` in it. Add `Pi`: `pi` → `Pi`, `Pi` stays. Remove them: `Hrudek` is corrected
    like any word again. Switch accounts: the previous account's words no longer apply.
 6. Password, URL, email and `.no` fields, `foo_bar`, `fooBar`, numbers, emoji, dictation and
    assistant output: unchanged.
