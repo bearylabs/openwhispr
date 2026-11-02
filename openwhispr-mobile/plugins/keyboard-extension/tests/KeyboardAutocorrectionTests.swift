@@ -138,7 +138,8 @@ private enum KeyboardAutocorrectionTests {
       && userDictionary(["Om"]).target(for: "am") == nil && userDictionary(["Ka"]).target(for: "km") == nil)
     check("two letters far apart are no target", pi.target(for: "Pa") == nil && pi.target(for: "xi") == nil)
     check("two letters never reach longer entries", pi.target(for: "Hr") == nil
-      && words.target(for: "Ik") == nil)
+      && userDictionary(["Tim", "Hruk"]).target(for: "Ik") == nil)
+    check("a swapped acronym becomes the entry", userDictionary(["KI"]).target(for: "Ik")?.word == "KI")
     check("three letters never become a two-letter entry", pi.target(for: "Pix") == nil)
     check("all-caps and shared entries are targets", words.target(for: "Nass")?.word == "NASA"
       && words.target(for: "Kubernetse")?.word == "Kubernetes")
