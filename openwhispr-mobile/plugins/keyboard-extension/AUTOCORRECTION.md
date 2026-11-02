@@ -70,8 +70,10 @@ autocorrection.
    lowercase. A word iOS knows stays (`Tom`, with `Tim` in the dictionary). The scan shares the
    press's 100 ms; cut short, it gives nothing.
 
-Entries may be any letters (`é`, Cyrillic) whose lowercase and capital are single letters, up to
-64 characters: the keyboard tracks words that long for the dictionary, while ordinary correction
+Entries may be any letters (`é`, Cyrillic, also outside the selected languages) whose lowercase
+and capital are single letters, stored with at most 64 UTF-16 units. The keyboard tracks typed
+words of 2 to 64 letters, lowercase or with a capital first letter, for the dictionary (a
+one-letter entry like `I` is never applied), while ordinary correction
 still stops at twenty letters and the selected languages' letters. A two-letter word becomes a
 two-letter entry only by its letters swapped or one key beside the right one (`Po`, `pu`, `Pk` →
 `Pi`), never when it is one of the languages' common or kept two-letter words (`so`, `am`, `ip`,
@@ -234,8 +236,9 @@ Swift rules with a stand-in dictionary. Without Apple's own proposals (worst cas
 ### Never corrected
 
 - Digits, punctuation, underscores, mixed or all caps, URL- and email-like tokens, emoji,
-  decomposed combining sequences, one-letter words, two-letter words except for their swap
-  (below), words over twenty letters (except for the app's dictionary), and words following
+  decomposed combining sequences, one-letter words, two-letter words except for their swap or
+  slip (below) and the app's dictionary, words over twenty letters (except for the app's
+  dictionary), and words following
   punctuation.
 - Fields other than default text fields: secure fields, fields hiding their text,
   `.autocorrectionType == .no`, URL, email, ASCII-only, numeric and other specialised keyboard

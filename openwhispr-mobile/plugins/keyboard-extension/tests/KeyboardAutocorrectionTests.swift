@@ -158,6 +158,18 @@ private enum KeyboardAutocorrectionTests {
     check("a closer shared word wins over a personal one",
           userDictionary(["kubectls"], shared: ["kubectl"]).target(for: "kubectk")?.word == "kubectl")
     check("a scan out of time finds nothing", words.target(for: "Hrudke", shouldStop: { true }) == nil)
+    var lookups = 0
+    check("a scan cut short after a first match finds nothing", userDictionary(["Hrudek", "Hrudel"])
+      .target(for: "Hrudke", shouldStop: { lookups += 1; return lookups > 1 }) == nil)
+    check("a tie in one list loses to a closer word in the other",
+          userDictionary(["Lenat", "Lenrt"]).target(for: "Lenart") == nil
+            && userDictionary(["Lenat", "Lenrt"], shared: ["Lenarr"]).target(for: "Lenart")?.word == "Lenarr")
+    let cyrillic = userDictionary(["Москва"])
+    check("Cyrillic entries fix case and take typos", cyrillic.caseFix(for: "москва") == "Москва"
+      && cyrillic.target(for: "Моксва")?.word == "Москва")
+    let longest = String(repeating: "ab", count: KeyboardUserDictionary.maxEntryLength / 2)
+    check("inputs up to the entry bound", KeyboardUserDictionary.isInput(longest)
+      && !KeyboardUserDictionary.isInput(longest + "a") && !KeyboardUserDictionary.isInput("i"))
 
     let letters = KeyboardCorrectionRules.defaultLetters
     check("the user's word wins over the ordinary pick", words.decide(
@@ -172,6 +184,12 @@ private enum KeyboardAutocorrectionTests {
       for: "iphone", letters: letters, misspelled: { false }, shouldStop: { false }, ordinary: { nil }) == "iPhone")
     check("out of time, no user's word", words.decide(
       for: "Hrudke", letters: letters, misspelled: { true }, shouldStop: { true }, ordinary: { nil }) == nil)
+    check("a known word isn't scanned", words.decide(
+      for: "Hrudke", letters: letters, misspelled: { false }, shouldStop: { false },
+      ordinary: { "Hrude" }) == "Hrude")
+    check("a split loses to the user's word", userDictionary(["ichhabee"]).decide(
+      for: "ichhabe", letters: letters, misspelled: { true }, shouldStop: { false },
+      ordinary: { "ich habe" }) == "ichhabee")
     check("no target: the ordinary pick", words.decide(
       for: "nciht", letters: letters, misspelled: { true }, shouldStop: { false }, ordinary: { "nicht" }) == "nicht")
 
@@ -203,6 +221,9 @@ private enum KeyboardAutocorrectionTests {
     var longPlain = typed("donaudampfschifffahrtsgesellschaft", document: document)
     check("past twenty letters nothing else is corrected", longPlain.0.correction(
       in: longPlain.1, provider: StubProvider(words: ["x"]), dictionary: words) == nil)
+    var russian = typed("москва", document: document)
+    check("Cyrillic reaches the dictionary", russian.0.correction(
+      in: russian.1, provider: StubProvider(words: []), dictionary: cyrillic)?.replacement == "Москва")
     var accented = typed("sin\u{e9}ad", document: document)
     check("letters of other languages reach the dictionary", accented.0.correction(
       in: accented.1, provider: StubProvider(words: []), dictionary: userDictionary(["Sin\u{e9}ad"]))?.replacement

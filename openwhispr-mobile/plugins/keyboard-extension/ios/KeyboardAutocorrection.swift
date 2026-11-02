@@ -301,7 +301,9 @@ struct KeyboardUserDictionary {
               shouldStop: () -> Bool, ordinary: () -> String?) -> String? {
     if let fixed = caseFix(for: word) { return fixed }
     if protects(word) { return nil }
-    if let target = target(for: word, shouldStop: { shouldStop() }), misspelled(), !shouldStop() {
+    // Whether iOS knows the word first: a known word skips the scan and keeps the press's time.
+    if Self.isInput(word), word.count >= Self.minTargetLength, misspelled(), !shouldStop(),
+       let target = target(for: word, shouldStop: { shouldStop() }) {
       return target.word
     }
     let ordinaryInput = KeyboardCorrectionRules.isWord(word, letters: letters)
