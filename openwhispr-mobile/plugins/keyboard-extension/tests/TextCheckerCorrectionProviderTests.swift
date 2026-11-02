@@ -205,6 +205,24 @@ enum TextCheckerCorrectionProviderTests {
     check("one language: its own words before give context", fix("vat", "I think this ", englishContext) == "bat"
       && fix("vat", "I think this ", englishPlain) != "bat")
     check("one language: a shared word before gives context", fix("vat", "so ", englishContext) == "bat")
+    // On the device German knows many English words (`think`, `still`, `warm`): they say
+    // nothing, and `I` says English.
+    UITextChecker.lexicons = [
+      "de_DE": StandInLexicon(language: "de_DE", wordsByFrequency:
+        ["ich", "bin", "so", "im", "das", "die", "Gefühl", "still", "warm", "modern", "Wald", "Phase", "think", "you"]),
+      "en_US": StandInLexicon(language: "en_US", wordsByFrequency:
+        ["the", "think", "you", "so", "I", "die", "is", "still", "warm", "modern", "phase"]),
+    ]
+    for languages in [[KeyboardCorrectionLanguage.german, .english], [.english]] {
+      let deviceLike = TextCheckerCorrectionProvider(languages: languages)
+      let name = languages.count == 2 ? "both" : "English alone"
+      check("device-like (\(name)): I think im → I’m", fix("im", "I think ", deviceLike) == "I\u{2019}m")
+      check("device-like (\(name)): I think you dont → don’t", fix("dont", "I think you ", deviceLike) == "don\u{2019}t")
+      for before in ["ich bin ", "so ", "das Gefühl ", "still ", "warm ", "modern ", "Phase I ", "x-I-x ",
+                     "https://I.zzzzzz ", "ich think ", "I think ich "] {
+        check("device-like (\(name)): im stays after \(before.debugDescription)", fix("im", before, deviceLike) == nil)
+      }
+    }
     if failed > 0 {
       print("Keyboard autocorrection provider: \(failed) of \(count) checks failed")
       exit(1)

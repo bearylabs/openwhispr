@@ -759,6 +759,51 @@ enum KeyboardCorrectionRules {
     return .sentenceStart
   }
 
+  /// The language of the words before the cursor, for the English contractions and the
+  /// word-pair context only: the only language that some of the last eight words say, and none
+  /// another. A word says a language when only that language knows it (as `sentenceLanguage`),
+  /// and the pronoun `I` (also `I'm`, `I’m`, `I've`, `I'd`, `I'll`) says English, but only as a
+  /// word of its own at a sentence's start or after a lowercase word, and not as `I.`, so
+  /// `Phase I`, `Ludwig I`, `I. Einleitung`, `x-I-x` and `I` in a URL say nothing. Words with other characters (URLs, hyphens, digits)
+  /// say nothing. Out of time (`shouldStop`), nil.
+  static func evidentLanguage(before: String, codes: [String], shouldStop: () -> Bool = { false },
+                              knows: (_ word: String, _ code: String) -> Bool) -> String? {
+    let english = KeyboardCorrectionLanguage.english.code
+    let opening: Set<Character> = ["(", "\"", "\u{201C}", "\u{201E}", "'", "\u{2018}"]
+    let closing: Set<Character> = [".", ",", "!", "?", ";", ":", ")", "\"", "\u{201D}", "\u{201C}", "'", "\u{2019}"]
+    let marks: Set<Character> = [".", "!", "?"]
+    let pronoun: Set<String> = ["I", "I'm", "I\u{2019}m", "I've", "I\u{2019}ve", "I'd", "I\u{2019}d", "I'll", "I\u{2019}ll"]
+    let tokens = before.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    var only = Set<String>()
+    for index in tokens.indices.suffix(8) {
+      let raw = tokens[index]
+      var word = Substring(raw)
+      while let first = word.first, opening.contains(first) { word = word.dropFirst() }
+      while let last = word.last, closing.contains(last), !pronoun.contains(String(word)) { word = word.dropLast() }
+      if pronoun.contains(String(word)) {
+        // `I.` is more often a numeral or a heading (`I. Einleitung`) than the pronoun.
+        // Wrapped too: `(I.)`, `"I."`.
+        guard !raw.contains(".") else { continue }
+        let previous = index > tokens.startIndex ? tokens[index - 1] : nil
+        let startsSentence = previous == nil || previous!.last.map { marks.contains($0) } == true
+        let afterLowercase = previous.map { $0.first?.isLowercase == true } == true
+        if (startsSentence || afterLowercase) && codes.contains(english) { only.insert(english) }
+        continue
+      }
+      let text = String(word)
+      guard text.count >= 2, text.allSatisfy({ $0.isLetter }) else { continue }
+      var knownBy: [String] = []
+      for code in codes {
+        if shouldStop() { return nil }
+        if knows(text, code) || (text != text.lowercased() && !shouldStop() && knows(text.lowercased(), code)) {
+          knownBy.append(code)
+        }
+      }
+      if knownBy.count == 1 { only.insert(knownBy[0]) }
+    }
+    return shouldStop() || only.count != 1 ? nil : only.first
+  }
+
   /// Whether some of the last eight words before the cursor (two letters or more) are known to
   /// exactly one of `codes`, and that one isn't `language`: the text there is in another
   /// language, or mixed. Shared and unknown words are no evidence. Out of time (`shouldStop`) it

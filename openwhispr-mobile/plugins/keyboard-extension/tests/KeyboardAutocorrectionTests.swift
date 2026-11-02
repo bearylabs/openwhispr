@@ -480,6 +480,28 @@ private enum KeyboardAutocorrectionTests {
       check("foreign-word scan stops at the deadline (\(stopAfter))", calls == min(stopAfter, 4)
         && result == (stopAfter < 4))
     }
+    // Evident language: words only one language knows, and the pronoun `I`.
+    let known: [String: Set<String>] = ["de": ["ich", "think", "die", "so", "still", "warm", "phase", "wald"],
+                                        "en": ["think", "die", "so", "still", "warm", "phase"]]
+    func evident(_ before: String) -> String? {
+      KeyboardCorrectionRules.evidentLanguage(before: before, codes: ["de", "en"],
+                                              knows: { known[$1]?.contains($0) == true })
+    }
+    let evidence: [(String, String?)] = [
+      ("I think ", "en"), ("I ", "en"), ("I'm so ", "en"), ("I\u{2019}m so ", "en"), ("so I ", "en"),
+      ("Ok. I ", "en"), ("(I think ", "en"), ("ich ", "de"), ("still ", nil), ("warm ", nil), ("so die ", nil),
+      ("ich think ", "de"), ("ich I ", nil), ("", nil), ("i ", nil), ("Phase I ", nil), ("Ludwig I ", nil),
+      ("x-I-x ", nil), ("https://I.zzzzzz ", nil), ("I.zzz ", nil), ("I. ", nil), ("Teil I. ", nil), ("(I.) ", nil), ("I.) ", nil), ("\"I.\" ", nil), ("I, ", "en"), ("(I) ", "en"), ("\"I'm\" ", "en"), ("\u{201E}I\u{2019}m\u{201C} ", "en"),
+    ]
+    for (before, expected) in evidence {
+      check("evident language of \(before.debugDescription)", evident(before) == expected)
+    }
+    check("without English, I is no evidence", KeyboardCorrectionRules.evidentLanguage(
+      before: "I ", codes: ["de"], knows: { _, _ in false }) == nil)
+    var evidentCalls = 0
+    check("evident language stops at the deadline", KeyboardCorrectionRules.evidentLanguage(
+      before: "Think think ", codes: ["de", "en"], shouldStop: { evidentCalls >= 1 },
+      knows: { _, _ in evidentCalls += 1; return true }) == nil && evidentCalls == 1)
     check("two-letter words ignore context", KeyboardCorrectionRules.replacement(
       for: "mi", suggestions: ["im"], contextBonus: { _ in 9 }) == "im")
   }

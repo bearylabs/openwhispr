@@ -109,9 +109,8 @@ it applies (`I`), and a lowercase entry `i` keeps it; no word becomes a one-lett
 
 ### English: `I`, `I’m`, `don’t`
 
-With English selected and installed, and only when the words before the cursor are English
-(**the sentence's language** above: some word only English knows, none only another language
-knows), a fixed list
+With English selected and installed, and only when the words before the cursor are English, a
+fixed list
 (`KeyboardCorrectionRules.englishContractions`) adds the capital or the apostrophe: `i` → `I`,
 `im` → `I’m`, `ive` → `I’ve`, `dont`, `isnt`, `doesnt`, `didnt`, `wasnt`, `werent`, `havent`,
 `hasnt`, `hadnt`, `wouldnt`, `couldnt`, `shouldnt`, `arent` → `…n’t`, `youre`, `theyre`,
@@ -119,7 +118,13 @@ knows), a fixed list
 (`Dont` → `Don’t`); mixed and all caps stay. Words that are words as typed aren't in it
 (`id`, `ill`, `cant`, `wont`, `lets`, `its`, `were`, `well`, `hell`). With no words before
 (`im` opening a field), mixed or German words (`ich bin im`), or English not selected, these
-words are corrected as before, so `im` stays. The sentence is checked against every language
+words are corrected as before, so `im` stays. The words before are English
+(`KeyboardCorrectionRules.evidentLanguage`) when some say English and none another language:
+a word only English knows, or the pronoun `I` (also `I'm`, `I’m`, `I've`, `I'd`, `I'll`) as a
+word of its own at a sentence's start or after a lowercase word, so `I think im` →
+`I think I’m` even though iOS's German dictionary knows `think`. `Phase I im`, `Ludwig I`, `I.` (also `(I.)`),
+`x-I-x` and an `I` in a URL say nothing, nor do words both dictionaries know (`still im
+Wald`, `so`). The sentence is checked against every language
 the keyboard knows whose dictionary is installed, selected or not, so with English alone
 selected `ich bin im` and `so im` stay too; with no other dictionary installed to tell English
 from, the list is off. The app's dictionary goes first: its spelling
@@ -279,7 +284,8 @@ respelling of accepted words or noun capitals.
   logged: the previous token when it is all letters (lowercased, NFC); a sentence start at the
   start of the field, after a line break, or after `.`, `!` or `?` ending a word of two letters
   or more; nothing otherwise (digits, URLs, apostrophes, hyphens, quotes, commas, `z.B.`, `a.`).
-- **Language**: with one language selected, its file, unless one of the last eight words
+- **Language** (`evidentLanguage`, as for the English contractions, with the selected
+  languages): with one language selected, its file, unless one of the last eight words
   before is known only to another installed language (`hasForeignWords`: `ich vat` with
   English alone, or a mixed sentence); shared words and a field's start keep it. With several,
   the sentence's language
@@ -321,7 +327,7 @@ respelling of accepted words or noun capitals.
 
   | Series | Without | With | Changed |
   | --- | --- | --- | --- |
-  | de, German and English | 2438 / 199 / 104 | 2469 / 168 / 104 | +35 −4 |
+  | de, German and English | 2438 / 199 / 104 | 2470 / 167 / 104 | +36 −4 |
   | de, German only | 2531 / 183 / 27 | 2561 / 153 / 27 | +37 −7 |
   | en, German and English | 2377 / 335 / 23 | 2431 / 281 / 23 | +57 −3 |
   | en, English only | 2431 / 293 / 11 | 2478 / 246 / 11 | +51 −4 |

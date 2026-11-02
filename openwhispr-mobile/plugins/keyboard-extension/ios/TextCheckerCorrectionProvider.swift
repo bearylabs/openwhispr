@@ -223,11 +223,7 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     let english = KeyboardCorrectionLanguage.english.code
     guard let fixed = KeyboardCorrectionRules.englishContraction(of: word), !before.isEmpty,
           resolvedCodes.contains(english), detectionDictionaries.count > 1 else { return nil }
-    let codes = detectionDictionaries.map { $0.code }
-    let byCode = Dictionary(uniqueKeysWithValues: detectionDictionaries.map { ($0.code, $0.dictionary) })
-    let code = KeyboardCorrectionRules.sentenceLanguage(
-      before: before, codes: codes,
-      knows: { word, code in !self.stop() && (byCode[code].map { self.isKnown(word, in: $0) } ?? false) })
+    let code = evidentLanguage(before: before, among: detectionDictionaries)
     guard !stop(), code == english else { return nil }
     // Flags only, never the word.
     log.info("Autocorrection English contraction")
@@ -506,16 +502,22 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
       // Nothing yet says which language a new sentence is in; the one before may be another.
       return nil
     } else {
-      let byCode = Dictionary(uniqueKeysWithValues: zip(resolvedCodes, dictionaries))
-      code = KeyboardCorrectionRules.sentenceLanguage(
-        before: before, codes: resolvedCodes,
-        knows: { word, code in !self.stop() && (byCode[code].map { self.isKnown(word, in: $0) } ?? false) })
+      code = evidentLanguage(before: before, among: Array(zip(resolvedCodes, dictionaries)))
     }
     guard !stop(), let code, let model = contextModels[code] else { return nil }
     let weight = contextWeight, cap = contextCap
     // Flags only: the language code, never a word.
     log.info("Autocorrection context: language=\(code, privacy: .public)")
     return { candidate in weight * min(model.bonus(for: candidate, after: context), cap) }
+  }
+
+  /// `KeyboardCorrectionRules.evidentLanguage` over `languages` (code and dictionary), within
+  /// the press's time budget.
+  private func evidentLanguage(before: String, among languages: [(code: String, dictionary: String)]) -> String? {
+    let byCode = Dictionary(uniqueKeysWithValues: languages.map { ($0.code, $0.dictionary) })
+    return KeyboardCorrectionRules.evidentLanguage(
+      before: before, codes: languages.map { $0.code }, shouldStop: { self.stop() },
+      knows: { word, code in !self.stop() && (byCode[code].map { self.isKnown(word, in: $0) } ?? false) })
   }
 
   /// Words completing the start of a long word in any of `dictionaries`
