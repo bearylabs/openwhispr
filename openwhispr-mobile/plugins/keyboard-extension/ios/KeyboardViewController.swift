@@ -1664,7 +1664,17 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     if let textCheckerProvider, textCheckerProvider.languages == languages {
       return textCheckerProvider
     }
-    let provider = TextCheckerCorrectionProvider(languages: languages)
+    // The selected languages' word pairs, memory-mapped from the keyboard's own bundle and
+    // released with the provider; a missing or unreadable file just means no context.
+    var contextModels: [String: KeyboardContextModel] = [:]
+    for language in languages {
+      if let url = Bundle(for: KeyboardViewController.self).url(
+        forResource: "KeyboardContext-\(language.code)", withExtension: "bin"),
+        let model = KeyboardContextModel(contentsOf: url) {
+        contextModels[language.code] = model
+      }
+    }
+    let provider = TextCheckerCorrectionProvider(languages: languages, contextModels: contextModels)
     textCheckerProvider = provider
     return provider
   }
@@ -1699,7 +1709,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     let edit = autoreleasepool {
       autocorrection.correction(
         in: context, provider: currentCorrectionProvider(), dictionary: currentUserDictionary(),
-        delimiter: delimiter)
+        delimiter: delimiter, straightApostrophe: !usesSmartQuotes)
     }
     guard let edit,
           // UITextChecker may take time. Re-read the proxy immediately before any deletion.

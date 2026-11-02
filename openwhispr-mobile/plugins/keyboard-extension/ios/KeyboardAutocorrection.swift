@@ -308,6 +308,7 @@ struct KeyboardUserDictionary {
     }
     let ordinaryInput = KeyboardCorrectionRules.isWord(word, letters: letters)
       || KeyboardCorrectionRules.isSwappable(word, letters: letters)
+      || KeyboardCorrectionRules.englishContraction(of: word) != nil
     return ordinaryInput ? ordinary() : nil
   }
 }
@@ -385,6 +386,30 @@ enum KeyboardCorrectionRules {
       sentence.contains { $0.twoLetterWords.contains(slip.lowercased()) }
     })
     return targets.count == 1 ? targets.first : nil
+  }
+
+  /// English words typed without their capital or apostrophe, corrected only in an English
+  /// sentence (the provider checks the sentence's language). Words that are words as typed stay
+  /// out (`id`, `ill`, `cant`, `wont`, `lets`, `its`, `were`, `hell`, `shell`, `well`).
+  /// Typed with the typographic apostrophe; `KeyboardAutocorrection.correction` straightens it
+  /// in fields without smart quotes.
+  static let englishContractions: [String: String] = [
+    "i": "I", "im": "I\u{2019}m", "ive": "I\u{2019}ve", "dont": "don\u{2019}t",
+    "isnt": "isn\u{2019}t", "doesnt": "doesn\u{2019}t", "didnt": "didn\u{2019}t",
+    "wasnt": "wasn\u{2019}t", "werent": "weren\u{2019}t", "havent": "haven\u{2019}t",
+    "hasnt": "hasn\u{2019}t", "hadnt": "hadn\u{2019}t", "wouldnt": "wouldn\u{2019}t",
+    "couldnt": "couldn\u{2019}t", "shouldnt": "shouldn\u{2019}t", "arent": "aren\u{2019}t",
+    "youre": "you\u{2019}re", "theyre": "they\u{2019}re", "thats": "that\u{2019}s",
+    "whats": "what\u{2019}s",
+  ]
+
+  /// The table's word for `word` typed in lowercase or with a capital first letter (`Dont` →
+  /// `Don’t`, `Im` → `I’m`), or nil. Nothing for mixed or all caps, or `I` already right.
+  static func englishContraction(of word: String) -> String? {
+    let lower = word.lowercased()
+    guard word == lower || word == capitalized(lower), let fixed = englishContractions[lower] else { return nil }
+    let result = word == lower ? fixed : capitalized(fixed)
+    return result == word ? nil : result
   }
 
   /// Keeps `candidates` that aren't words German accepts only as a possible compound
@@ -713,6 +738,50 @@ enum KeyboardCorrectionRules {
     return only.count == 1 ? only.first : nil
   }
 
+  /// What comes right before a word, from the text before it: the previous word when the last
+  /// thing before the spaces is a word of letters, a sentence start after `.`, `!` or `?` ending
+  /// a word of letters, after a line break or at the very start; nil otherwise (digits, URLs,
+  /// apostrophes, hyphens, abbreviations like `z.B.`, quotes, other punctuation), so no context
+  /// joins words that aren't next to each other.
+  static func wordContext(before: String) -> KeyboardWordContext? {
+    var text = Substring(before)
+    while text.last == " " { text = text.dropLast() }
+    guard let last = text.last else { return .sentenceStart }
+    if last.isNewline { return .sentenceStart }
+    let token = text.reversed().prefix { !$0.isWhitespace }.reversed()
+    let word = String(token).precomposedStringWithCanonicalMapping
+    if !word.isEmpty, word.allSatisfy({ $0.isLetter }), word.unicodeScalars.count == word.count {
+      return .word(word.lowercased().precomposedStringWithCanonicalMapping)
+    }
+    let marks: Set<Character> = [".", "!", "?"]
+    let stem = word.reversed().drop { marks.contains($0) }.reversed()
+    guard marks.contains(last), stem.count >= 2, stem.allSatisfy({ $0.isLetter }) else { return nil }
+    return .sentenceStart
+  }
+
+  /// Whether some of the last eight words before the cursor (two letters or more) are known to
+  /// exactly one of `codes`, and that one isn't `language`: the text there is in another
+  /// language, or mixed. Shared and unknown words are no evidence. Out of time (`shouldStop`) it
+  /// answers true, so a caller abstains.
+  static func hasForeignWords(before: String, language: String, codes: [String],
+                              shouldStop: () -> Bool = { false },
+                              knows: (_ word: String, _ code: String) -> Bool) -> Bool {
+    let words = before.split { !$0.isLetter }.suffix(8).map(String.init).filter { $0.count >= 2 }
+    for word in words {
+      var knownBy: [String] = []
+      for code in codes {
+        // Before every lookup, the lowercase one included.
+        if shouldStop() { return true }
+        if knows(word, code) { knownBy.append(code); continue }
+        guard word != word.lowercased() else { continue }
+        if shouldStop() { return true }
+        if knows(word.lowercased(), code) { knownBy.append(code) }
+      }
+      if knownBy.count == 1, knownBy[0] != language { return true }
+    }
+    return shouldStop()
+  }
+
   static func capitalized(_ word: String) -> String {
     word.prefix(1).uppercased() + word.dropFirst()
   }
@@ -763,9 +832,19 @@ enum KeyboardCorrectionRules {
   /// whose umlaut spelling is a word almost always means that word. Among those, the one
   /// replacing the most pairs wins (`gruesse` → `grüße`, not the Swiss `grüsse`). More corrections, at the
   /// risk of picking the wrong word of two; backspace right after undoes it.
+  ///
+  /// `rank` orders candidates (`score`); `splitRank`, when given, decides instead whether both
+  /// words of a split are common (`maxSplitRank`), so a provider can score with one source of
+  /// ranks and keep the split rule on another. `contextBonus`, when given, is subtracted from a
+  /// candidate's score (a split's: its first word's), so the words before can choose between
+  /// candidates; it never makes a word a candidate, and 0 leaves the score as it is.
   static func replacement(for word: String, suggestions: [String],
                           letters: Set<Character> = KeyboardCorrectionRules.defaultLetters,
-                          rank: (String) -> Int? = { _ in nil }) -> String? {
+                          rank: (String) -> Int? = { _ in nil },
+                          splitRank: ((String) -> Int?)? = nil,
+                          contextBonus: ((String) -> Double)? = nil) -> String? {
+    func bonus(_ candidate: String) -> Double { contextBonus.map { max(0, $0(candidate)) } ?? 0 }
+    func commonRank(_ word: String) -> Int? { splitRank.map { $0(word) } ?? rank(word) }
     // A two-letter word only ever becomes its swap (`mi` → `im`) or a one-key slip (`ia` → `is`).
     if isSwappable(word, letters: letters) {
       let allowed = [swapped(word)] + twoLetterSlips(of: word)
@@ -789,12 +868,13 @@ enum KeyboardCorrectionRules {
         guard let (left, right) = splitParts(of: candidate, letters: letters),
               right == right.lowercased(),
               word == word.lowercased() || left != left.lowercased(),
-              let leftRank = rank(left), let rightRank = rank(right),
+              let leftRank = commonRank(left), let rightRank = commonRank(right),
               max(leftRank, rightRank) <= maxSplitRank,
               let joinedCost = left + right == word
                 ? 0 : editCost(from: word, to: left + right),
               joinedCost + splitCost <= maxEditCost(forLength: word.count) + 1e-9 else { continue }
-        let candidateScore = score(cost: joinedCost + splitCost, rank: max(leftRank, rightRank))
+        let rarer = max(rank(left) ?? leftRank, rank(right) ?? rightRank)
+        let candidateScore = score(cost: joinedCost + splitCost, rank: rarer) - bonus(left)
         if best == nil || (best!.pairs == 0 && candidateScore < best!.score - 1e-9) {
           best = (candidate, candidateScore, 0)
         }
@@ -806,7 +886,7 @@ enum KeyboardCorrectionRules {
       guard isWord(candidate, letters: letters),
             word == word.lowercased() || candidate != candidate.lowercased() else { continue }
       guard let cost = respelled?.0 ?? editCost(from: word, to: candidate) else { continue }
-      let candidateScore = score(cost: cost, rank: rank(candidate))
+      let candidateScore = score(cost: cost, rank: rank(candidate)) - bonus(candidate)
       let pairs = respelled?.1 ?? 0
       if best == nil || pairs > best!.pairs
           || (pairs == best!.pairs && candidateScore < best!.score - 1e-9) {
@@ -1015,18 +1095,23 @@ struct KeyboardAutocorrection {
   mutating func correction(in context: KeyboardCorrectionContext,
                            provider: KeyboardCorrectionProvider,
                            dictionary: KeyboardUserDictionary = .empty,
-                           delimiter: String = " ") -> Edit? {
+                           delimiter: String = " ",
+                           straightApostrophe: Bool = false) -> Edit? {
     reconcile(context)
     let letters = provider.letters
     guard Self.delimiters.contains(delimiter), expected != nil,
           KeyboardCorrectionRules.isWord(word, letters: letters)
             || KeyboardCorrectionRules.isSwappable(word, letters: letters)
+            || KeyboardCorrectionRules.englishContraction(of: word) != nil
             || (!dictionary.isEmpty && KeyboardUserDictionary.isInput(word)),
           (context.after ?? "").isEmpty || context.after?.first?.isWhitespace == true,
           let replacement = provider.replacement(
             for: word, before: String((context.before ?? "").dropLast(word.count)),
             dictionary: dictionary) else { return nil }
-    return Edit(original: word, replacement: replacement, context: context, delimiter: delimiter)
+    // A contraction's apostrophe is typed straight where the field doesn't use smart quotes,
+    // as the apostrophe key would type it there.
+    let typed = straightApostrophe ? replacement.replacingOccurrences(of: "\u{2019}", with: "'") : replacement
+    return Edit(original: word, replacement: typed, context: context, delimiter: delimiter)
   }
 
   mutating func didCorrect(_ edit: Edit, at now: TimeInterval = ProcessInfo.processInfo.systemUptime) {

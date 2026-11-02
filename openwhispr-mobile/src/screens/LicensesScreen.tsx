@@ -33,6 +33,13 @@ const ENTRIES: LicenseEntry[] = [
     note: 'On-device Whisper speech recognition.',
     url: 'https://github.com/ggerganov/whisper.cpp',
   },
+  {
+    name: 'Leipzig Corpora Collection',
+    license: 'CC-BY-4.0',
+    copyright: '© 2024 Universität Leipzig / Sächsische Akademie der Wissenschaften / InfAI',
+    note: 'Word pairs for keyboard autocorrection, counted in deu_news_2023_1M and eng_news_2023_1M: lowercased, reduced to the 300,000 most common pairs per language, with their association in bits. Licensed under CC BY 4.0 (creativecommons.org/licenses/by/4.0).',
+    url: 'https://wortschatz.uni-leipzig.de/en/download',
+  },
 ];
 
 export default function LicensesScreen() {

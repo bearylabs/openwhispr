@@ -19,8 +19,23 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   private let resolvedCodes: [String]
   /// The German dictionary, when German is selected and installed (for ae/oe/ue/ss).
   private let germanDictionary: String?
+  /// Every language the keyboard knows whose dictionary is installed, selected or not, by code:
+  /// the English contractions need a sentence shown to be English against all of them.
+  private let detectionDictionaries: [(code: String, dictionary: String)]
   private let checker = UITextChecker()
   private var completionCache: [String: [String]] = [:]
+  /// Corpus ranks by language code (`KeyboardFrequencyList`), for scoring only; empty uses
+  /// UITextChecker's completions alone.
+  private let frequencyLists: [String: KeyboardFrequencyList]
+  /// Word pairs by language code (`KeyboardContextModel`): the word before chooses between the
+  /// candidates for a word being corrected. Empty, or a weight of 0, changes nothing.
+  private let contextModels: [String: KeyboardContextModel]
+  private let contextWeight: Double
+  private let contextCap: Double
+  /// Edits per bit of a pair's association, and the most bits a pair counts for: tuned on typos
+  /// in Wikipedia sentences (AUTOCORRECTION.md, Context).
+  static let defaultContextWeight = 0.15
+  static let defaultContextCap = 8.0
   /// How long a space press may spend on its own lookups, from the moment it asks for
   /// suggestions; each search stops at it and drops what it didn't finish.
   static let slipSearchNanoseconds: UInt64 = 100_000_000
@@ -40,8 +55,15 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   }
   private let log = Logger(subsystem: "com.gizmolabs.openwhispr.keyboard", category: "Autocorrection")
 
-  init(languages: [KeyboardCorrectionLanguage]) {
+  init(languages: [KeyboardCorrectionLanguage], frequencyLists: [String: KeyboardFrequencyList] = [:],
+       contextModels: [String: KeyboardContextModel] = [:],
+       contextWeight: Double = TextCheckerCorrectionProvider.defaultContextWeight,
+       contextCap: Double = TextCheckerCorrectionProvider.defaultContextCap) {
     self.languages = languages
+    self.frequencyLists = frequencyLists
+    self.contextModels = contextModels
+    self.contextWeight = contextWeight
+    self.contextCap = contextCap
     let available = UITextChecker.availableLanguages
     let resolved = languages.compactMap { language in
       Self.dictionary(for: language, from: available).map { (language, $0) }
@@ -49,6 +71,9 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     dictionaries = resolved.map { $0.1 }
     resolvedCodes = resolved.map { $0.0.code }
     germanDictionary = resolved.first { $0.0.code == KeyboardCorrectionLanguage.german.code }?.1
+    detectionDictionaries = KeyboardCorrectionLanguage.all.compactMap { language in
+      Self.dictionary(for: language, from: available).map { (language.code, $0) }
+    }
     letters = KeyboardCorrectionLanguage.letters(of: resolved.map { $0.0 })
   }
 
@@ -74,11 +99,23 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     misspelledRange(of: word, in: dictionary).location == NSNotFound
   }
 
-  /// How common a word is: its position among UITextChecker's completions of its first two
-  /// letters, which Apple orders by likelihood (lower is more common); nil when no selected
-  /// dictionary completes to it. Completions are cached per dictionary and prefix, a few dozen
-  /// at most, since the keyboard extension runs under a tight memory limit.
+  /// How common a word is, for scoring: per selected language its rank in that language's
+  /// frequency list (`KeyboardFrequencyList`, among the list's words with the same first two
+  /// letters), else its position among UITextChecker's completions of its first two letters
+  /// (`completionRank`); the lowest. Without lists it is `completionRank`.
   func frequencyRank(of candidate: String) -> Int? {
+    guard !frequencyLists.isEmpty else { return completionRank(of: candidate) }
+    return zip(resolvedCodes, dictionaries).compactMap { code, dictionary in
+      frequencyLists[code]?.rank(of: candidate) ?? rank(of: candidate, in: dictionary)
+    }.min()
+  }
+
+  /// A word's position among UITextChecker's completions of its first two letters, which Apple
+  /// orders by likelihood (lower is more common); nil when no selected dictionary completes to
+  /// it. The rules that ask whether a word is common at all (two words for one, respellings of
+  /// accepted words) use this, never the frequency lists. Completions are cached per dictionary
+  /// and prefix, a few dozen at most, since the keyboard extension runs under a tight memory limit.
+  private func completionRank(of candidate: String) -> Int? {
     dictionaries.compactMap { rank(of: candidate, in: $0) }.min()
   }
 
@@ -107,12 +144,12 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   /// stay. A respelling with ß also needs German not to know the ss spelling, or the ß one to
   /// be common.
   private func knownWordRespellings(of word: String) -> [String] {
-    guard let germanDictionary, frequencyRank(of: word) == nil else { return [] }
+    guard let germanDictionary, completionRank(of: word) == nil else { return [] }
     let germanKnowsWord = isKnown(word, in: germanDictionary)
     let found = KeyboardCorrectionRules.transcriptions(of: word).compactMap { respelling -> String? in
       guard !stop(), let spelling = germanSpelling(of: respelling.word, in: germanDictionary) else { return nil }
       guard spelling.contains("ß") else { return spelling }
-      return !germanKnowsWord || frequencyRank(of: spelling) != nil ? spelling : nil
+      return !germanKnowsWord || completionRank(of: spelling) != nil ? spelling : nil
     }
     return stop() ? [] : found
   }
@@ -138,10 +175,19 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
   /// it protects, or a misspelled word becoming one of its words, ahead of anything iOS proposes.
   /// The scan shares the press's time budget with the ordinary search that follows.
   func replacement(for word: String, before: String, dictionary: KeyboardUserDictionary) -> String? {
-    let ordinary = {
-      KeyboardCorrectionRules.replacement(
+    let ordinary = { () -> String? in
+      // After the whole dictionary decision, ahead of every ordinary candidate.
+      if KeyboardCorrectionRules.englishContraction(of: word) != nil {
+        if let contraction = self.englishContraction(for: word, before: before) { return contraction }
+        // Out of time while reading the sentence, or `i`, which nothing else corrects: no
+        // further lookups.
+        guard !self.stop(), KeyboardCorrectionRules.isWord(word, letters: self.letters)
+          || KeyboardCorrectionRules.isSwappable(word, letters: self.letters) else { return nil }
+      }
+      return KeyboardCorrectionRules.replacement(
         for: word, suggestions: self.suggestionsWithinDeadline(for: word, before: before),
-        letters: self.letters, rank: { self.frequencyRank(of: $0) })
+        letters: self.letters, rank: { self.frequencyRank(of: $0) },
+        splitRank: { self.completionRank(of: $0) })
     }
     startDeadline()
     guard !dictionary.isEmpty else { return ordinary() }
@@ -166,18 +212,42 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     return pick
   }
 
+  /// `I`, `I’m`, `don’t` and the rest of `KeyboardCorrectionRules.englishContractions`, only when
+  /// English is selected and installed and the words before the cursor are in English
+  /// (`KeyboardCorrectionRules.sentenceLanguage`), checked against every language the keyboard
+  /// knows with an installed dictionary, selected or not, so that with English alone selected
+  /// `ich bin` or `so` still isn't English. With no words before, mixed, shared or German ones,
+  /// or no other dictionary to tell English from, `im` and `dont` are corrected (or not) as
+  /// before. Within the press's time budget.
+  private func englishContraction(for word: String, before: String) -> String? {
+    let english = KeyboardCorrectionLanguage.english.code
+    guard let fixed = KeyboardCorrectionRules.englishContraction(of: word), !before.isEmpty,
+          resolvedCodes.contains(english), detectionDictionaries.count > 1 else { return nil }
+    let codes = detectionDictionaries.map { $0.code }
+    let byCode = Dictionary(uniqueKeysWithValues: detectionDictionaries.map { ($0.code, $0.dictionary) })
+    let code = KeyboardCorrectionRules.sentenceLanguage(
+      before: before, codes: codes,
+      knows: { word, code in !self.stop() && (byCode[code].map { self.isKnown(word, in: $0) } ?? false) })
+    guard !stop(), code == english else { return nil }
+    // Flags only, never the word.
+    log.info("Autocorrection English contraction")
+    return fixed
+  }
+
   /// `suggestions(for:before:)` within a time budget already started.
   private func suggestionsWithinDeadline(for word: String, before: String) -> [String] {
     if KeyboardCorrectionRules.isSwappable(word, letters: letters) {
       return swapSuggestions(for: word, before: before)
     }
-    guard languages.count > 1, !before.isEmpty else { return suggestions(for: word, using: dictionaries) }
+    guard languages.count > 1, !before.isEmpty else {
+      return suggestions(for: word, using: dictionaries, before: before)
+    }
     let byCode = Dictionary(uniqueKeysWithValues: zip(resolvedCodes, dictionaries))
     guard let code = KeyboardCorrectionRules.sentenceLanguage(
       before: before, codes: resolvedCodes,
       knows: { word, code in byCode[code].map { self.isKnown(word, in: $0) } ?? false }),
       let sentenceDictionary = byCode[code], !isKnown(word, in: sentenceDictionary) else {
-      return suggestions(for: word, using: dictionaries)
+      return suggestions(for: word, using: dictionaries, before: before)
     }
     let others = dictionaries.filter { $0 != sentenceDictionary }
     let commonElsewhere = others.contains { dictionary in
@@ -185,7 +255,7 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     }
     // Flags only: the sentence's language code, never its words.
     log.info("Autocorrection sentence language: \(code, privacy: .public) commonElsewhere=\(commonElsewhere, privacy: .public)")
-    return suggestions(for: word, using: commonElsewhere ? dictionaries : [sentenceDictionary])
+    return suggestions(for: word, using: commonElsewhere ? dictionaries : [sentenceDictionary], before: before)
   }
 
   /// A word among the first this many completions of its first two letters counts as common
@@ -230,7 +300,7 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     return [slip]
   }
 
-  private func suggestions(for word: String, using dictionaries: [String]) -> [String] {
+  private func suggestions(for word: String, using dictionaries: [String], before: String) -> [String] {
     guard !dictionaries.isEmpty else {
       log.info("Autocorrection skipped: no dictionary for the selected languages")
       return []
@@ -256,7 +326,8 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
       let respelled = knownWordRespellings(of: word)
       guard !stop() else { return [] }
       let pick = respelled.isEmpty ? word : KeyboardCorrectionRules.replacement(
-        for: word, suggestions: respelled, letters: letters, rank: { frequencyRank(of: $0) }) ?? word
+        for: word, suggestions: respelled, letters: letters, rank: { self.frequencyRank(of: $0) },
+        splitRank: { self.completionRank(of: $0) }) ?? word
       // A correctly typed lowercase German noun is capitalised (`haus` → `Haus`).
       let final = nounCased(pick)
       // Flags only: which dictionaries accept the word, never the word itself.
@@ -401,13 +472,50 @@ final class TextCheckerCorrectionProvider: KeyboardCorrectionProvider {
     if word == word.lowercased() {
       suggestions = suggestions.filter { $0 == $0.lowercased() || !listsLowercase($0.lowercased()) }
     }
+    let contextBonus = self.contextBonus(before: before)
     let pick = KeyboardCorrectionRules.replacement(
-      for: word, suggestions: suggestions, letters: letters, rank: { frequencyRank(of: $0) })
+      for: word, suggestions: suggestions, letters: letters, rank: { frequencyRank(of: $0) },
+      splitRank: { self.completionRank(of: $0) }, contextBonus: contextBonus)
     // The correction takes the noun's capital when it is one (`strasse` → `Straße`).
     let final = pick.map(nounCased)
     // Only control-flow metadata, never the original, proposals or surrounding text.
     log.info("Autocorrection proposals: dictionaries=\(dictionaries.count, privacy: .public) compound=\(compound, privacy: .public) dictionaryCount=\(suggestions.count, privacy: .public) completions=\(completed.count, privacy: .public) splits=\(splits.count, privacy: .public) neighborSlips=\(generated, privacy: .public) slipSearchTimedOut=\(self.timedOut, privacy: .public) capitalised=\(final.map { $0 != $0.lowercased() } == true && word == word.lowercased(), privacy: .public) corrects=\(final != nil, privacy: .public)")
     return final.map { [$0] } ?? []
+  }
+
+  /// The word before's bonus for each candidate (`KeyboardContextModel`, weighted and capped), or
+  /// nil: no models or weight, no usable context (`KeyboardCorrectionRules.wordContext`), or no
+  /// language to read it in. One selected language reads it in that language, unless a word
+  /// before only another installed language knows (`hasForeignWords`); several, in the
+  /// sentence's language (`sentenceLanguage`), and a sentence start then gets no context, since
+  /// the sentence before may be in another language. Out of time while finding the language, none: every candidate is scored alike.
+  private func contextBonus(before: String) -> ((String) -> Double)? {
+    guard !contextModels.isEmpty, contextWeight > 0, !stop(),
+          let context = KeyboardCorrectionRules.wordContext(before: before) else { return nil }
+    let code: String?
+    if resolvedCodes.count == 1 {
+      // Not in a sentence another installed language shows to be its own, or mixed (`ich vat`
+      // with English alone); shared words (`so`) and a field's start keep it.
+      let byCode = Dictionary(uniqueKeysWithValues: detectionDictionaries.map { ($0.code, $0.dictionary) })
+      let foreign = KeyboardCorrectionRules.hasForeignWords(
+        before: before, language: resolvedCodes[0], codes: detectionDictionaries.map { $0.code },
+        shouldStop: { self.stop() },
+        knows: { word, code in !self.stop() && (byCode[code].map { self.isKnown(word, in: $0) } ?? false) })
+      code = foreign ? nil : resolvedCodes[0]
+    } else if context == .sentenceStart {
+      // Nothing yet says which language a new sentence is in; the one before may be another.
+      return nil
+    } else {
+      let byCode = Dictionary(uniqueKeysWithValues: zip(resolvedCodes, dictionaries))
+      code = KeyboardCorrectionRules.sentenceLanguage(
+        before: before, codes: resolvedCodes,
+        knows: { word, code in !self.stop() && (byCode[code].map { self.isKnown(word, in: $0) } ?? false) })
+    }
+    guard !stop(), let code, let model = contextModels[code] else { return nil }
+    let weight = contextWeight, cap = contextCap
+    // Flags only: the language code, never a word.
+    log.info("Autocorrection context: language=\(code, privacy: .public)")
+    return { candidate in weight * min(model.bonus(for: candidate, after: context), cap) }
   }
 
   /// Words completing the start of a long word in any of `dictionaries`

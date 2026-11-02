@@ -1,8 +1,8 @@
 # Keyboard autocorrection
 
 The keyboard corrects a word the user typed by hand when they tap space, `?`, `!`, `.` or `,`. It is on by default
-and works on the device only: public `UITextChecker` APIs and the app's dictionary (below), no
-network, and no typed text in logs.
+and works on the device only: public `UITextChecker` APIs, the app's dictionary and bundled
+word pairs (below), no network, and no typed text in logs.
 
 ## Settings
 
@@ -72,12 +72,14 @@ autocorrection.
 
 Entries may be any letters (`é`, Cyrillic, also outside the selected languages) whose lowercase
 and capital are single letters, stored with at most 64 UTF-16 units. The keyboard tracks typed
-words of 2 to 64 letters, lowercase or with a capital first letter, for the dictionary (a
-one-letter entry like `I` is never applied), while ordinary correction
+words of 2 to 64 letters, lowercase or with a capital first letter, for the dictionary, while
+ordinary correction
 still stops at twenty letters and the selected languages' letters. A two-letter word becomes a
 two-letter entry only by its letters swapped or one key beside the right one (`Po`, `pu`, `Pk` →
 `Pi`), never when it is one of the languages' common or kept two-letter words (`so`, `am`, `ip`,
 `km`); a longer word never becomes a two-letter entry, nor a two-letter word a longer one.
+The only one-letter word ever looked at is `i` (English, below): the dictionary's spelling of
+it applies (`I`), and a lowercase entry `i` keeps it; no word becomes a one-letter entry.
 
 ## What gets corrected
 
@@ -105,6 +107,31 @@ two-letter entry only by its letters swapped or one key beside the right one (`P
 - Only the selected languages' letters count (German a–z and äöüß, English a–z), limited to
   languages whose dictionary is installed.
 
+### English: `I`, `I’m`, `don’t`
+
+With English selected and installed, and only when the words before the cursor are English
+(**the sentence's language** above: some word only English knows, none only another language
+knows), a fixed list
+(`KeyboardCorrectionRules.englishContractions`) adds the capital or the apostrophe: `i` → `I`,
+`im` → `I’m`, `ive` → `I’ve`, `dont`, `isnt`, `doesnt`, `didnt`, `wasnt`, `werent`, `havent`,
+`hasnt`, `hadnt`, `wouldnt`, `couldnt`, `shouldnt`, `arent` → `…n’t`, `youre`, `theyre`,
+`thats`, `whats` → `you’re`, `they’re`, `that’s`, `what’s`. A capital first letter is kept
+(`Dont` → `Don’t`); mixed and all caps stay. Words that are words as typed aren't in it
+(`id`, `ill`, `cant`, `wont`, `lets`, `its`, `were`, `well`, `hell`). With no words before
+(`im` opening a field), mixed or German words (`ich bin im`), or English not selected, these
+words are corrected as before, so `im` stays. The sentence is checked against every language
+the keyboard knows whose dictionary is installed, selected or not, so with English alone
+selected `ich bin im` and `so im` stay too; with no other dictionary installed to tell English
+from, the list is off. The app's dictionary goes first: its spelling
+(`IM`) or protection (`im`) wins. The list runs after the dictionary's decision and before
+every ordinary candidate (`TextCheckerCorrectionProvider.englishContraction`); a press that runs
+out of time reading the sentence corrects nothing and looks nothing more up, and `i`, which
+nothing else corrects, never reaches ordinary correction. The apostrophe is
+`’`, or `'` in fields without smart quotes, as the apostrophe key types there
+(`KeyboardAutocorrection.correction(straightApostrophe:)`). Backspace right after undoes it
+like any correction. The sentence's language doesn't reset at a full stop, so a German
+sentence after an English one can still count as English for its first words.
+
 ### Choosing a replacement
 
 `KeyboardCorrectionRules.replacement` scores every candidate: its weighted edit distance to the
@@ -121,7 +148,8 @@ typed word plus 0.3 per doubling of its frequency rank. The lowest score wins; t
   5 from seven: roughly one, two, three and four mistakes.
 - Frequency (`frequencyRank`): the candidate's position among `UITextChecker`'s completions of
   its first two letters, which Apple orders by likelihood; cached per dictionary and prefix (at
-  most 48 lists). Unknown counts as rank 20,000.
+  most 48 lists). Unknown counts as rank 20,000. The provider can score with corpus ranks
+  instead (**Frequency lists** below); the keyboard doesn't yet.
 - A capitalised word keeps its capital; case otherwise changes only for German nouns (below).
 - Examples: `nciht` → `nicht`, `teh` → `the`, `kalppt` → `klappt`, `fubktiojiert` →
   `funktioniert`, `njxbt` → `nicht`, `wirklixh` → `wirklich`, `hsbd` → `habe` (two slips like
@@ -233,13 +261,132 @@ Swift rules with a stand-in dictionary. Without Apple's own proposals (worst cas
 (slips, swaps, missing and extra letters) about 90% right and 9% wrong; two slips 75% right and
 23% wrong; three slips 42% right, 21% wrong and the rest unchanged.
 
+### Context: the word before
+
+The word before chooses between the candidates for a word that is being corrected anyway
+(`ich hsbd` → `habe`, not `hand`; `das ist wue` → `wie`). Each candidate's score loses
+0.15 edits per bit by which the corpus finds it more likely after that word than anywhere
+(`KeyboardContextModel.bonus`, at most 8 bits; `TextCheckerCorrectionProvider.defaultContextWeight`
+and `defaultContextCap`); a split takes its first word's. A pair missing from the file adds
+nothing, so the score without it is today's. Context never makes a word a candidate, never
+corrects a word iOS knows, comes after the app's dictionary (its spelling, protection and typo
+targets are decided before any candidate is scored), and doesn't touch two-letter swaps and
+slips, the English contractions, ae/oe/ue/ss respellings (they still win first), the
+respelling of accepted words or noun capitals.
+
+- **The word before** (`KeyboardCorrectionRules.wordContext(before:)`), from the text before
+  the word that the keyboard has already read, kept in memory for the press only and never
+  logged: the previous token when it is all letters (lowercased, NFC); a sentence start at the
+  start of the field, after a line break, or after `.`, `!` or `?` ending a word of two letters
+  or more; nothing otherwise (digits, URLs, apostrophes, hyphens, quotes, commas, `z.B.`, `a.`).
+- **Language**: with one language selected, its file, unless one of the last eight words
+  before is known only to another installed language (`hasForeignWords`: `ich vat` with
+  English alone, or a mixed sentence); shared words and a field's start keep it. With several,
+  the sentence's language
+  (**the sentence's language** above), and none while it is unknown. A sentence start gets
+  context only with one language selected, since the sentence before may be in another. The check shares the press's 100 ms; out of
+  time, no context.
+- **Data**: `KeyboardContext-de.bin` (2.0 MB) and `KeyboardContext-en.bin` (1.8 MB), bundled
+  as resources of the keyboard target and memory-mapped from its bundle for the selected
+  languages when the provider is created (and released with it on a memory warning or when
+  the keyboard disappears). `node scripts/build-keyboard-context-lists.mjs --out ios` makes
+  them, byte for byte the same each time, from the Leipzig Corpora Collection's
+  `deu_news_2023_1M` and `eng_news_2023_1M` (checksummed): per language the 300,000 most
+  frequent pairs seen at least three times among its 50,000 most common words, plus sentence
+  starts, with their positive pointwise mutual information log2(P(next | previous) / P(next))
+  in 1/16 bits; the probabilities count every word, so pruning doesn't inflate them.
+  The Leipzig download corpora are licensed under CC BY 4.0 (Terms of Usage,
+  wortschatz.uni-leipzig.de/en/usage, archived 2024-01-21 at web.archive.org: “All corpora
+  provided for download are licensed under CC BY”); the app's licenses screen credits
+  “© 2024 Universität Leipzig / Sächsische Akademie der Wissenschaften / InfAI” with the
+  corpora and what was made of them.
+- **Format** (little-endian): `OWCX`, version 1, value kind 1, language, word and pair counts,
+  `u32` word offsets, the words sorted bytewise (`.` is the sentence start), padding to 4,
+  `u32` pair keys (previous << 16 | next, ascending) and `u8` values. A wrong header or sizes
+  is no model; lookups stay inside the file.
+- **Cost** (Linux): opening 20–100 µs, a lookup 0.9 µs median, 1.6 µs at the 95th percentile.
+  Nothing is decoded or kept beyond the mapping, whose pages are clean and droppable; a lookup
+  allocates only its key's bytes. Not yet measured in
+  the extension on an iPhone.
+- **Tuning** (`sh scripts/benchmark-keyboard-autocorrection.sh --sentences`, Linux): one typo
+  (the tuning mix: 50% a key beside in its row, 20% one row off, 10% each swap, missing, extra
+  letter) in up to two words of 1,500 Wikipedia sentences per language and split
+  (`deu_wikipedia_2021_300K`, `eng_wikipedia_2016_300K`; split by article into dev and test,
+  duplicates and sentences also in the news corpora dropped;
+  `scripts/build-keyboard-context-sentences.mjs`), typed after the sentence's own words before
+  it. Weights 0.05–0.5 and caps 4 and 8 were compared on dev; 0.15 with cap 8 gains almost as
+  much as the larger weights while losing far fewer words. 100,000 pairs (0.7 MB each) gain a
+  little less, all pairs seen three times (2.8 MB each) a little more. Held-out test, right /
+  wrong / unchanged, without → with context:
+
+  | Series | Without | With | Changed |
+  | --- | --- | --- | --- |
+  | de, German and English | 2438 / 199 / 104 | 2469 / 168 / 104 | +35 −4 |
+  | de, German only | 2531 / 183 / 27 | 2561 / 153 / 27 | +37 −7 |
+  | en, German and English | 2377 / 335 / 23 | 2431 / 281 / 23 | +57 −3 |
+  | en, English only | 2431 / 293 / 11 | 2478 / 246 / 11 | +51 −4 |
+
+  Wrong corrections fall by 16–19%. The test sentences come from articles the dev sentences
+  don't; one English census sentence template with other numbers still appears in both. With
+  the word before mistyped too and left so (`--noisy-previous`), the gain shrinks and almost
+  nothing is lost: +6 −0 (de, both), +8 −0 (de only), +14 −1 (en, both), +13 −1 (en only). The
+  control (the same words typed right) and typos that make another real word change no more
+  with context than without; one German control word, `starb` after a citation, becomes
+  `star` either way. On the LibreOffice benchmark (`--with-context`) only `committe` and
+  `committy` after `This is ` change, to `committed` instead of `committee`. These are Linux
+  simulations (stand-in dictionaries, no Apple proposals, one typo with the right or one
+  mistyped word before it); an Apple-backed run and a device check are still to come.
+
+### Frequency lists (built, not enabled)
+
+`TextCheckerCorrectionProvider(languages:frequencyLists:)` can score candidates with a corpus
+rank per language (`KeyboardFrequencyList`) instead of UITextChecker's completion order: for
+each of a language's 50,000 most common words, its rank among the list's words with the same
+first two letters, the scale of the completion rank, so `frequencyWeight` and the 20,000 cap
+keep their meaning. A word missing from a language's list takes its completion rank there; the
+lowest over the selected languages counts. Only the score changes: whether a word is common at
+all (both words of a split within `maxSplitRank`, the respelling of an accepted word, a word
+common in another language, compound checks) is still decided by the completions
+(`completionRank`, and `KeyboardCorrectionRules.replacement(splitRank:)` for splits).
+
+The keyboard builds its provider without lists, and no list is bundled, because the benchmark
+below couldn't show they help: on Linux the stand-in completions come from the same corpus as
+the lists, so the comparison there says nothing about Apple's order. To decide, run
+`sh scripts/benchmark-keyboard-autocorrection.sh --frequency` on a Mac (Apple's UITextChecker)
+and enable them only if more words come out right and none more wrong, in both languages and
+the control series, then measure the extension on an iPhone (below).
+
+- **Data**: `node scripts/build-keyboard-frequency-lists.mjs --out <dir>` downloads the pinned
+  AOSP word lists (codeberg.org/Helium314/aosp-dictionaries, `main_de` and
+  `main_en_US__experimental`, checksummed) and writes `KeyboardFrequency-de.bin` (789 KiB) and
+  `-en.bin` (663 KiB). Both are built from the Leipzig Corpora Collection
+  (wortschatz.uni-leipzig.de), source lists under CC BY 4.0. The legacy `main_en_US` list
+  (OpenBoard/AOSP) has no stated license and isn't used. Kept: words of the language's letters,
+  two or more, not `not_a_word`, lowercased and NFC, in the source's frequency order.
+- **Format**: little-endian; `OWFR`, version 1, rank kind 1 (two-letter prefix), the language,
+  the count, `u32` offsets, `u16` ranks, then the words sorted bytewise. The file is
+  memory-mapped; opening reads the header and two offsets, and a lookup binary-searches the
+  mapped bytes with bounds checks, so it never reads outside the file. A missing file, or one
+  whose header or sizes are wrong, is no list; the words' order and uniqueness aren't checked
+  on opening (that would read the whole file) and are the generator's to guarantee.
+- **Cost** (Linux, both lists, `--measure-lists`): opening 150 µs (German, cold) and 23 µs,
+  a lookup in both 1.6 µs median and 3.1 µs at the 95th percentile, 36 KiB allocated; the
+  mapped pages are clean file pages the system can drop. Not yet measured in the extension on
+  an iPhone (Instruments: footprint with both languages, first and warm press latency,
+  provider recreation after a memory warning).
+- **Enabling** them: bundle the two files as resources of the keyboard target
+  (`withKeyboardExtension.js` has no Resources phase yet), open them from the extension's bundle
+  for the selected languages in `currentCorrectionProvider()`, and add the attribution to the
+  app's licenses screen: “Word frequencies: Leipzig Corpora Collection, via
+  Helium314/aosp-dictionaries, CC BY 4.0 (creativecommons.org/licenses/by/4.0); lowercased,
+  reduced to the 50,000 most common words per language and ranked.”
+
 ### Never corrected
 
 - Digits, punctuation, underscores, mixed or all caps, URL- and email-like tokens, emoji,
-  decomposed combining sequences, one-letter words, two-letter words except for their swap or
-  slip (below) and the app's dictionary, words over twenty letters (except for the app's
-  dictionary), and words following
-  punctuation.
+  decomposed combining sequences, one-letter words (except `i` in English, above), two-letter
+  words except for their swap or slip (above), `im` in English and the app's dictionary, words
+  over twenty letters (except for the app's dictionary), and words following punctuation.
 - Fields other than default text fields: secure fields, fields hiding their text,
   `.autocorrectionType == .no`, URL, email, ASCII-only, numeric and other specialised keyboard
   types. Selections are never replaced.
@@ -295,6 +442,7 @@ which runs wherever `swiftc` and Foundation are installed):
 sh scripts/test-keyboard-autocorrection.sh
 python3 plugins/keyboard-extension/tests/run-keyboard-touch-tests.py
 npm test -- --runInBand
+sh scripts/benchmark-keyboard-autocorrection.sh   # [--frequency] [--rev <commit>] [--details]
 ```
 
 - `tests/KeyboardAutocorrectionTests.swift`: the app's dictionary (parsing, bounds, its
@@ -303,8 +451,20 @@ npm test -- --runInBand
   key neighbours, generated candidates, respellings, completion prefixes, missing spaces,
   excluded tokens, Unicode, context invalidation, delayed reports, document boundaries,
   own-change acknowledgements, non-consuming undo queries and their consistency with consumption
-  (including the inclusive 3-second window). Jest runs it when `swiftc` is available and skips it
-  otherwise.
+  (including the inclusive 3-second window), the frequency list format (ranks, case and
+  composition, misses, malformed files and offsets), the split rule's own ranks, and the
+  English contractions (the table, title case, excluded words, `i` and `im` reaching the
+  provider, the straight apostrophe, undo, the dictionary first). Jest runs it when `swiftc` is
+  available and skips it otherwise.
+- `tests/TextCheckerCorrectionProviderTests.swift` (off Apple platforms, run by the same
+  script): the production provider with stand-in UIKit and os modules (`tests/linux/`) and
+  small word lists: contractions only in English sentences (none without words before, in
+  German, mixed or with English deselected), the dictionary first, ordinary correction
+  unchanged, frequency lists that change the score but not the split rule, and word-pair
+  context (`ich hsbd` → `habe`, other or unusable words before, weight 0, real and dictionary
+  words untouched, the sentence's language with two selected).
+- The word-pair format, `wordContext` and the context's place in the score are in
+  `tests/KeyboardAutocorrectionTests.swift`.
 - `tests/KeyboardTouchTests.swift` (Catalyst): the controller with a stub provider: correction,
   the Settings switch, English, neighbouring-key slips, umlaut respelling, noun capitalisation,
   long words, missing spaces, undo and its window, the undo image/label and timer, host-report
@@ -316,8 +476,61 @@ npm test -- --runInBand
   serialization, bounds, change tracking, failed writes, the account reset), the language list kept in
   step with the keyboard's, and source registration in `withKeyboardExtension.js`.
 
-`KeyboardAutocorrection.swift` and `TextCheckerCorrectionProvider.swift` are registered in
-`withKeyboardExtension.js`; a native rebuild is required.
+`KeyboardAutocorrection.swift`, `KeyboardFrequencyList.swift`, `KeyboardContextModel.swift`
+and `TextCheckerCorrectionProvider.swift` are registered in `withKeyboardExtension.js`, and
+`KeyboardContext-{de,en}.bin` as the keyboard target's resources; a native rebuild is
+required.
+
+### Benchmark
+
+`tests/benchmark/libreoffice-{de,en}.tsv` are LibreOffice's autocorrect word corrections
+(`extras/source/autocorr/lang/{de,en-US}/DocumentList.xml`, Mozilla Public License 2.0; test
+data only, never bundled or used by the keyboard), made by
+`node scripts/build-keyboard-autocorrection-benchmark.mjs` from pinned, checksummed commits:
+every entry typed as one word of letters whose correction is letters with single spaces,
+apostrophes or hyphens, so typos, case changes, missing spaces and contractions; symbol, emoji
+and pattern entries are dropped. 209 German and 843 English entries.
+`scripts/benchmark-keyboard-autocorrection.sh` types each word letter by letter through
+`KeyboardAutocorrection` and the production `TextCheckerCorrectionProvider`, then a space, with
+no app dictionary: right (the expected word), wrong (another change), unchanged. Series: German
+and English selected (the default), one language, and after a fixed `Das ist ` / `This is `;
+the control series types each single-word correction itself, which must stay. On a Mac it uses
+Apple's UITextChecker (Mac Catalyst; its dictionaries may differ from an iPhone's). On Linux it
+uses stand-in modules with the 400,000 most common words of the AOSP lists as the dictionaries
+and their completions, and no proposals of Apple's: a simulation of the rules, not of iOS.
+
+Linux simulation, rules and provider at 52c234689 (before the English contractions):
+
+| Series | Right | Wrong | Unchanged |
+| --- | --- | --- | --- |
+| de, German and English | 154 | 39 | 16 |
+| de, German only | 164 | 23 | 22 |
+| de, after `Das ist ` | 164 | 23 | 22 |
+| en, German and English | 673 | 116 | 54 |
+| en, English only | 679 | 106 | 58 |
+| en, after `This is ` | 677 | 109 | 57 |
+| control de (160) / en (556) | 159 / 556 | 1 / 0 | 0 / 0 |
+
+With the contractions, after `This is ` the entries `couldnt`, `didnt`, `doesnt`, `dont`,
+`shouldnt`, `werent` and `i` come out right (684 right, 105 wrong, 54 unchanged; before,
+`didnt` → `dint`, `dont` → `don`, `werent` → `ardent`); every other series is unchanged, since
+without English words before nothing in the list applies. Most wrong results in the simulation are rare corpus words (`challange` →
+`challah`) and splits into short corpus words (`anbd` → `an bd`) that Apple's dictionaries
+would likely not offer; the control's one change, `Accesoire` → `Accessoire`, is LibreOffice's
+own misspelling.
+
+Frequency lists in the simulation (`--frequency`): with completions in corpus order, as above,
+two right words turn wrong and nothing else changes: `opnion` becomes `onion` instead of
+`opinion` in each English series, and `Dockument` becomes `Document` instead of `Dokument` with
+German and English selected. Each is a tie in edit cost (1.5) decided by rank: the stand-in
+completions count case variants and hyphenated forms (`On`, `ON`, …), so `onion` ranks 22nd
+there and 13th in the deduplicated list, which flips a near tie (0.03); and the lowest rank over
+the selected languages lets English `document` outrank German `dokument`. In a sensitivity experiment with alphabetical
+completions (`--alphabetical-completions`, an order that carries no frequency) the lists gain
+37 German and 67 English words (German and English selected), the control unchanged. That
+shows the score is sensitive to the rank source; it says nothing about whether Apple's order is
+worse than the lists' or by how much. Apple's baseline and the extension's footprint are not
+measured, so the lists stay off.
 
 ## Checks on an iPhone
 
@@ -337,9 +550,12 @@ npm test -- --runInBand
 4. Notes, Messages and a Safari text area, with fast typing: no correction is better than one in
    the wrong place. Move the cursor, select text, switch fields, apps and keyboards: no stale
    replacement.
-5. Add `Hrudek`, `OpenWhispr` and `iPhone` to the dictionary: `Hrudek` + space stays, `Hrudke`
+5. Context: `ich hsbd` → `ich habe`, `das ist wue` → `das ist wie`; `hsbd` alone and after a
+   URL → `hand`. Measure the keyboard in Instruments: footprint with German and English,
+   first press after appearing and warm presses, after a memory warning.
+6. Add `Hrudek`, `OpenWhispr` and `iPhone` to the dictionary: `Hrudek` + space stays, `Hrudke`
    and `hrudke` → `Hrudek`, `openwhsipr` → `OpenWhispr` (backspace → `openwhsipr`), `iphone` and
    `Iphone` → `iPhone`; `Tom` stays with `Tim` in it. Add `Pi`: `pi` → `Pi`, `Pi` stays. Remove them: `Hrudek` is corrected
    like any word again. Switch accounts: the previous account's words no longer apply.
-6. Password, URL, email and `.no` fields, `foo_bar`, `fooBar`, numbers, emoji, dictation and
+7. Password, URL, email and `.no` fields, `foo_bar`, `fooBar`, numbers, emoji, dictation and
    assistant output: unchanged.

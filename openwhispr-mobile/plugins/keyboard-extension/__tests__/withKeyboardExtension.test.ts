@@ -338,10 +338,15 @@ function expectKeyboardWiring(project: Project, keyboardTarget = KEYBOARD_TARGET
   expect(phaseFiles(project, keyboardTarget, 'PBXSourcesBuildPhase')).toEqual([
     'KeyboardAutocorrection.swift',
     'KeyboardCapitalization.swift',
+    'KeyboardContextModel.swift',
+    'KeyboardFrequencyList.swift',
     'KeyboardViewController.swift',
     'TextCheckerCorrectionProvider.swift',
   ]);
-  expect(phaseFiles(project, keyboardTarget, 'PBXResourcesBuildPhase')).toEqual([]);
+  expect(phaseFiles(project, keyboardTarget, 'PBXResourcesBuildPhase')).toEqual([
+    'KeyboardContext-de.bin',
+    'KeyboardContext-en.bin',
+  ]);
   expect(phaseFiles(project, APP_TARGET, 'PBXSourcesBuildPhase')).toEqual([]);
   expect(phaseFiles(project, APP_TARGET, 'PBXResourcesBuildPhase')).toEqual([]);
 }
@@ -432,6 +437,19 @@ describe('withKeyboardExtension helpers', () => {
         .sort(),
     ).toEqual(swiftFiles.sort());
   });
+
+  it('bundles every resource the plugin ships, in the keyboard target', () => {
+    const resources = fs
+      .readdirSync(path.join(__dirname, '..', 'ios'))
+      .filter((name) => name.endsWith('.bin'));
+
+    expect(resources.sort()).toEqual(['KeyboardContext-de.bin', 'KeyboardContext-en.bin']);
+    expect(
+      EXTENSION_FILES.filter((file: { phase: string }) => file.phase === 'Resources')
+        .map((file: { name: string }) => file.name)
+        .sort(),
+    ).toEqual(resources.sort());
+  });
 });
 
 describe('withKeyboardExtension mods', () => {
@@ -456,7 +474,7 @@ describe('withKeyboardExtension mods', () => {
     expect(keyboardTarget).toBeDefined();
     expectKeyboardWiring(result.modResults, keyboardTarget);
     expect(phaseCount(result.modResults, keyboardTarget!, 'PBXSourcesBuildPhase')).toBe(1);
-    expect(phaseCount(result.modResults, keyboardTarget!, 'PBXResourcesBuildPhase')).toBe(0);
+    expect(phaseCount(result.modResults, keyboardTarget!, 'PBXResourcesBuildPhase')).toBe(1);
     expect(embeddedAppexCount(result.modResults)).toBe(1);
   });
 
@@ -501,7 +519,7 @@ describe('withKeyboardExtension mods', () => {
     const project = parseProject(fs.readFileSync(file, 'utf8'));
     expectKeyboardWiring(project);
     expect(phaseCount(project, KEYBOARD_TARGET, 'PBXSourcesBuildPhase')).toBe(1);
-    expect(phaseCount(project, KEYBOARD_TARGET, 'PBXResourcesBuildPhase')).toBe(0);
+    expect(phaseCount(project, KEYBOARD_TARGET, 'PBXResourcesBuildPhase')).toBe(1);
   });
 
   it('repairs a project whose keyboard group CocoaPods rewrote without a name', async () => {
@@ -532,6 +550,10 @@ describe('withKeyboardExtension mods', () => {
     expect(groupChildNames(project, 'B30000000000000000000002')).toEqual([
       'KeyboardAutocorrection.swift',
       'KeyboardCapitalization.swift',
+      'KeyboardContext-de.bin',
+      'KeyboardContext-en.bin',
+      'KeyboardContextModel.swift',
+      'KeyboardFrequencyList.swift',
       'KeyboardViewController.swift',
       'TextCheckerCorrectionProvider.swift',
     ]);

@@ -19,10 +19,17 @@ const EXTENSION_FILES = [
   { name: 'KeyboardViewController.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
   { name: 'KeyboardCapitalization.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
   { name: 'KeyboardAutocorrection.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
+  { name: 'KeyboardFrequencyList.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
   { name: 'TextCheckerCorrectionProvider.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
+  { name: 'KeyboardContextModel.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
+  // Word pairs for autocorrection, made by scripts/build-keyboard-context-lists.mjs (Leipzig
+  // Corpora Collection, CC BY 4.0); read from the keyboard's own bundle.
+  { name: 'KeyboardContext-de.bin', fileType: 'file', phase: 'Resources' },
+  { name: 'KeyboardContext-en.bin', fileType: 'file', phase: 'Resources' },
 ];
 const BUILD_PHASE_ISA = {
   Sources: 'PBXSourcesBuildPhase',
+  Resources: 'PBXResourcesBuildPhase',
 };
 
 function firstScheme(value) {

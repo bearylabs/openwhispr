@@ -246,6 +246,244 @@ private enum KeyboardAutocorrectionTests {
       in: noDictionary.1, provider: StubProvider(words: ["x"])) == nil)
   }
 
+  /// A frequency list file as `scripts/build-keyboard-frequency-lists.mjs` writes it.
+  static func frequencyListData(_ entries: [(String, UInt16)], magic: String = "OWFR", version: UInt16 = 1,
+                                kind: UInt16 = 1, language: [UInt8] = Array("de".utf8),
+                                reserved: UInt16 = 0) -> Data {
+    let sorted = entries.map { (Array($0.0.utf8), $0.1) }.sorted { $0.0.lexicographicallyPrecedes($1.0) }
+    var bytes = Array(magic.utf8)
+    func u16(_ value: UInt16) { bytes += [UInt8(value & 0xff), UInt8(value >> 8)] }
+    func u32(_ value: UInt32) { bytes += (0..<4).map { UInt8((value >> (8 * $0)) & 0xff) } }
+    u16(version); u16(kind); bytes += language; u16(reserved); u32(UInt32(sorted.count))
+    var offset: UInt32 = 0
+    for entry in sorted { u32(offset); offset += UInt32(entry.0.count) }
+    u32(offset)
+    for entry in sorted { u16(entry.1) }
+    for entry in sorted { bytes += entry.0 }
+    return Data(bytes)
+  }
+
+  /// The frequency lists (`KeyboardFrequencyList`), the split rule's own ranks, and the English
+  /// contractions with their gates.
+  static func frequencyAndContractionChecks(document: UUID) {
+    let data = frequencyListData([("nicht", 0), ("nichts", 3), ("haus", 7), ("größe", 2), ("über", 1)])
+    let list = KeyboardFrequencyList(data: data)
+    check("a frequency list opens", list?.count == 5 && list?.language == "de")
+    check("frequency list ranks", list?.rank(of: "nicht") == 0 && list?.rank(of: "nichts") == 3
+      && list?.rank(of: "über") == 1)
+    check("frequency list lookups ignore case and composition", list?.rank(of: "Haus") == 7
+      && list?.rank(of: "GRÖSSE") == nil && list?.rank(of: "gro\u{308}ße") == 2 && list?.rank(of: "Über") == 1)
+    check("frequency list misses", list?.rank(of: "nich") == nil && list?.rank(of: "nichtss") == nil
+      && list?.rank(of: "") == nil && list?.rank(of: "a") == nil && list?.rank(of: "zzz") == nil)
+    check("an empty frequency list ranks nothing", KeyboardFrequencyList(data: frequencyListData([]))?.rank(of: "a") == nil)
+    check("a malformed frequency list is no list",
+          KeyboardFrequencyList(data: frequencyListData([("a", 0)], magic: "OWFX")) == nil
+            && KeyboardFrequencyList(data: frequencyListData([("a", 0)], version: 2)) == nil
+            && KeyboardFrequencyList(data: frequencyListData([("a", 0)], kind: 2)) == nil
+            && KeyboardFrequencyList(data: frequencyListData([("a", 0)], language: [0, 0])) == nil
+            && KeyboardFrequencyList(data: frequencyListData([("a", 0)], language: Array("DE".utf8))) == nil
+            && KeyboardFrequencyList(data: frequencyListData([("a", 0)], reserved: 1)) == nil
+            && KeyboardFrequencyList(data: data.dropLast()) == nil
+            && KeyboardFrequencyList(data: data + Data([0])) == nil
+            && KeyboardFrequencyList(data: Data()) == nil
+            && KeyboardFrequencyList(data: Data("OWFR".utf8)) == nil)
+    var shuffled = [UInt8](data)
+    // A first offset past the words' start, read at lookup, is refused there.
+    shuffled[16 + 4 * 2] = 0xff
+    check("out-of-bounds offsets don't read outside the file",
+          KeyboardFrequencyList(data: Data(shuffled))?.rank(of: "nicht") == nil)
+    check("a missing file is no list", KeyboardFrequencyList(
+      contentsOf: URL(fileURLWithPath: "/nonexistent/KeyboardFrequency-de.bin")) == nil)
+
+    // Scoring ranks and the split rule's ranks are separate: a split both of whose words are
+    // common by `splitRank` is scored with `rank`, and one that isn't stays out whatever `rank` says.
+    let splitRanks: [String: Int] = ["ich": 1, "habe": 4]
+    check("the split rule uses its own ranks", KeyboardCorrectionRules.replacement(
+      for: "ichhabe", suggestions: ["ich habe"], rank: { _ in 0 }, splitRank: { _ in 500 }) == nil)
+    check("a split common by its own ranks is kept", KeyboardCorrectionRules.replacement(
+      for: "ichhabe", suggestions: ["ich habe"], rank: { _ in nil }, splitRank: { splitRanks[$0] }) == "ich habe")
+    // Scored with `rank`: `ich habe` (rank 0, cost 1) beats `ichhabe`'s slip `ichgabe` (cost 1,
+    // unranked); with the split's own rank 600 it would have lost to a rank-0 slip.
+    check("a split is scored with the scoring ranks", KeyboardCorrectionRules.replacement(
+      for: "ichhabe", suggestions: ["ichgabe", "ich habe"], rank: { $0 == "ichgabe" ? 2 : 0 },
+      splitRank: { _ in 60 }) == "ich habe")
+    check("without splitRank the scoring ranks decide splits", KeyboardCorrectionRules.replacement(
+      for: "ichhabe", suggestions: ["ich habe"], rank: { _ in 500 }) == nil)
+
+    // English contractions: the table only, with case kept; real words stay out.
+    let contractions = ["i": "I", "im": "I\u{2019}m", "Im": "I\u{2019}m", "dont": "don\u{2019}t",
+                        "Dont": "Don\u{2019}t", "ive": "I\u{2019}ve", "youre": "you\u{2019}re",
+                        "thats": "that\u{2019}s", "shouldnt": "shouldn\u{2019}t"]
+    for (typed, expected) in contractions {
+      check("contraction \(typed)", KeyboardCorrectionRules.englishContraction(of: typed) == expected)
+    }
+    for typed in ["I", "IM", "DONT", "dOnt", "id", "ill", "cant", "wont", "lets", "its", "were", "well",
+                  "hell", "shell", "don", "a", "", "i\u{2019}m", "nicht"] {
+      check("no contraction for \(typed)", KeyboardCorrectionRules.englishContraction(of: typed) == nil)
+    }
+    check("contractions are typed with the typographic apostrophe",
+          KeyboardCorrectionRules.englishContractions.values.allSatisfy { !$0.contains("'") })
+
+    // The state machine tracks `i` and `im` for the provider, and types the apostrophe the field
+    // uses; undo restores the word as typed.
+    struct ContractionProvider: KeyboardCorrectionProvider {
+      func suggestions(for word: String) -> [String] { [] }
+      func replacement(for word: String, before: String, dictionary: KeyboardUserDictionary) -> String? {
+        dictionary.decide(for: word, letters: letters, misspelled: { true }, shouldStop: { false },
+                          ordinary: { KeyboardCorrectionRules.englishContraction(of: word) })
+      }
+    }
+    var single = typed("i", prefix: "so ", document: document)
+    check("a one-letter contraction is offered to the provider", single.0.correction(
+      in: single.1, provider: ContractionProvider())?.replacement == "I")
+    var other = typed("a", prefix: "so ", document: document)
+    check("other one-letter words are not", other.0.correction(
+      in: other.1, provider: ContractionProvider()) == nil)
+    var curly = typed("im", prefix: "so ", document: document)
+    let curlyEdit = curly.0.correction(in: curly.1, provider: ContractionProvider())
+    check("contraction with the typographic apostrophe", curlyEdit?.replacement == "I\u{2019}m")
+    var straight = typed("dont", prefix: "so ", document: document)
+    let straightEdit = straight.0.correction(in: straight.1, provider: ContractionProvider(),
+                                             delimiter: ",", straightApostrophe: true)
+    check("contraction with a straight apostrophe", straightEdit?.replacement == "don't"
+      && straightEdit?.delimiter == ",")
+    if let straightEdit {
+      straight.0.didCorrect(straightEdit, at: 100)
+      let after = context("so don't,", document: document)
+      check("undo of a contraction restores the typed word",
+            straight.0.takeUndo(in: after, at: 101)?.original == "dont")
+    }
+    var plain = typed("nciht", prefix: "so ", document: document)
+    check("a straight apostrophe changes nothing else", plain.0.correction(
+      in: plain.1, provider: StubProvider(), straightApostrophe: true)?.replacement == "nicht")
+
+    // The app's dictionary goes first: its spelling, then its protection, then the contraction.
+    let words = userDictionary(["im", "Hrudek"])
+    check("a dictionary word is no contraction", words.decide(
+      for: "im", letters: KeyboardCorrectionRules.defaultLetters, misspelled: { true }, shouldStop: { false },
+      ordinary: { KeyboardCorrectionRules.englishContraction(of: "im") }) == nil)
+    check("the dictionary's spelling of a one-letter word wins", userDictionary(["I"]).decide(
+      for: "i", letters: KeyboardCorrectionRules.defaultLetters, misspelled: { true }, shouldStop: { false },
+      ordinary: { "x" }) == "I")
+    check("a dictionary without the word leaves the contraction", words.decide(
+      for: "dont", letters: KeyboardCorrectionRules.defaultLetters, misspelled: { true }, shouldStop: { false },
+      ordinary: { KeyboardCorrectionRules.englishContraction(of: "dont") }) == "don\u{2019}t"
+      && words.decide(for: "i", letters: KeyboardCorrectionRules.defaultLetters, misspelled: { true },
+                      shouldStop: { false }, ordinary: { KeyboardCorrectionRules.englishContraction(of: "i") }) == "I")
+  }
+
+  /// A word-pair file as `scripts/build-keyboard-context-lists.mjs` writes it; `.` is the sentence start.
+  static func contextModelData(_ pairs: [(String, String, UInt8)], language: String = "de",
+                               magic: String = "OWCX", version: UInt16 = 1, reserved: UInt16 = 0) -> Data {
+    let words = Array(Set(pairs.flatMap { [$0.0, $0.1] })).map { Array($0.utf8) }
+      .sorted { $0.lexicographicallyPrecedes($1) }
+    func id(_ word: String) -> UInt32 { UInt32(words.firstIndex(of: Array(word.utf8))!) }
+    let entries = pairs.map { (id($0.0) << 16 | id($0.1), $0.2) }.sorted { $0.0 < $1.0 }
+    var bytes = Array(magic.utf8)
+    func u16(_ value: UInt16) { bytes += [UInt8(value & 0xff), UInt8(value >> 8)] }
+    func u32(_ value: UInt32) { bytes += (0..<4).map { UInt8((value >> (8 * $0)) & 0xff) } }
+    u16(version); u16(1); bytes += Array(language.utf8); u16(reserved)
+    u32(UInt32(words.count)); u32(UInt32(entries.count)); u32(0)
+    var offset: UInt32 = 0
+    for word in words { u32(offset); offset += UInt32(word.count) }
+    u32(offset)
+    for word in words { bytes += word }
+    while bytes.count % 4 != 0 { bytes.append(0) }
+    for entry in entries { u32(entry.0) }
+    for entry in entries { bytes.append(entry.1) }
+    return Data(bytes)
+  }
+
+  /// The word-pair file (`KeyboardContextModel`), what counts as the word before
+  /// (`wordContext`), and the context's place in the score.
+  static func contextChecks() {
+    let data = contextModelData([("ich", "habe", 93), (".", "ich", 30), ("ist", "wie", 1), ("für", "größe", 200)])
+    let model = KeyboardContextModel(data: data)
+    check("a context model opens", model?.pairCount == 4 && model?.wordCount == 7 && model?.language == "de")
+    check("a pair's bonus in bits", model?.bonus(for: "habe", after: .word("ich")) == 93.0 / 16
+      && model?.bonus(for: "ich", after: .sentenceStart) == 30.0 / 16)
+    check("bonus lookups ignore the candidate's case and composition",
+          model?.bonus(for: "Habe", after: .word("ich")) == 93.0 / 16
+            && model?.bonus(for: "gro\u{308}ße", after: .word("für")) == 200.0 / 16)
+    check("a missing pair or word is no bonus", model?.bonus(for: "hand", after: .word("ich")) == 0
+      && model?.bonus(for: "habe", after: .word("du")) == 0 && model?.bonus(for: "habe", after: .sentenceStart) == 0
+      && model?.bonus(for: "", after: .word("ich")) == 0)
+    check("an empty context model gives nothing",
+          KeyboardContextModel(data: contextModelData([]))?.bonus(for: "a", after: .sentenceStart) == 0)
+    check("a malformed context model is no model",
+          KeyboardContextModel(data: contextModelData([("a", "b", 1)], magic: "OWCY")) == nil
+            && KeyboardContextModel(data: contextModelData([("a", "b", 1)], version: 2)) == nil
+            && KeyboardContextModel(data: contextModelData([("a", "b", 1)], language: "D\u{0}")) == nil
+            && KeyboardContextModel(data: contextModelData([("a", "b", 1)], reserved: 1)) == nil
+            && KeyboardContextModel(data: data.dropLast()) == nil
+            && KeyboardContextModel(data: data + Data([0])) == nil
+            && KeyboardContextModel(data: Data("OWCX".utf8)) == nil
+            && KeyboardContextModel(data: Data()) == nil)
+    var hostile = [UInt8](data)
+    hostile[24 + 4 * 3] = 0xff
+    check("hostile word offsets don't read outside the file",
+          KeyboardContextModel(data: Data(hostile)).map { _ in true } != nil)
+    _ = KeyboardContextModel(data: Data(hostile))?.bonus(for: "habe", after: .word("ich"))
+    check("a missing context file is no model",
+          KeyboardContextModel(contentsOf: URL(fileURLWithPath: "/nonexistent/KeyboardContext-de.bin")) == nil)
+
+    // The word before: the previous word of letters, or a sentence start; nothing else.
+    let contexts: [(String, KeyboardWordContext?)] = [
+      ("", .sentenceStart), ("das ist ", .word("ist")), ("Das IST  ", .word("ist")), ("Hallo. ", .sentenceStart),
+      ("Wow! ", .sentenceStart), ("Echt?! ", .sentenceStart), ("Zeile\n", .sentenceStart), ("foo\n ", .sentenceStart),
+      ("für Ärger ", .word("ärger")), ("x.com ", nil), ("z.B. ", nil), ("a. ", nil), ("3 ", nil), ("Seite 3. ", nil),
+      ("don't ", nil), ("foo123 ", nil), ("E-Mail ", nil), ("„Hallo“ ", nil), ("Hallo, ", nil), ("(so ", nil),
+      ("gro\u{308}ße ", .word("größe")),
+    ]
+    for (before, expected) in contexts {
+      check("word context of \(before.debugDescription)", KeyboardCorrectionRules.wordContext(before: before) == expected)
+    }
+
+    // The bonus chooses between candidates and nothing else.
+    let ranks: [String: Int] = ["hand": 0, "habe": 1]
+    check("without context the closer, commoner word wins", KeyboardCorrectionRules.replacement(
+      for: "hsbd", suggestions: ["hand", "habe"], rank: { ranks[$0] }) == "hand")
+    check("context can choose another candidate", KeyboardCorrectionRules.replacement(
+      for: "hsbd", suggestions: ["hand", "habe"], rank: { ranks[$0] },
+      contextBonus: { $0 == "habe" ? 0.9 : 0 }) == "habe")
+    check("a zero bonus changes nothing", KeyboardCorrectionRules.replacement(
+      for: "hsbd", suggestions: ["hand", "habe"], rank: { ranks[$0] }, contextBonus: { _ in 0 }) == "hand")
+    check("a negative bonus counts as none", KeyboardCorrectionRules.replacement(
+      for: "hsbd", suggestions: ["hand", "habe"], rank: { ranks[$0] },
+      contextBonus: { $0 == "hand" ? -5 : 0 }) == "hand")
+    check("context never makes a word a candidate", KeyboardCorrectionRules.replacement(
+      for: "hsbd", suggestions: ["hand"], rank: { ranks[$0] }, contextBonus: { _ in 9 }) == "hand"
+      && KeyboardCorrectionRules.replacement(for: "hsbd", suggestions: [], contextBonus: { _ in 9 }) == nil
+      && KeyboardCorrectionRules.replacement(for: "hsbd", suggestions: ["zebra"], contextBonus: { _ in 9 }) == nil)
+    check("context doesn't outweigh an umlaut respelling", KeyboardCorrectionRules.replacement(
+      for: "schoen", suggestions: ["schön", "schoen"], contextBonus: { $0 == "schoen" ? 50 : 0 }) == "schön")
+    check("a split takes its first word's bonus", KeyboardCorrectionRules.replacement(
+      for: "ichhabe", suggestions: ["ichgabe", "ich habe"], rank: { $0 == "ichgabe" ? 0 : 60 },
+      contextBonus: { $0 == "ich" ? 2 : 0 }) == "ich habe"
+      && KeyboardCorrectionRules.replacement(
+        for: "ichhabe", suggestions: ["ichgabe", "ich habe"], rank: { $0 == "ichgabe" ? 0 : 60 },
+        contextBonus: { $0 == "ich habe" || $0 == "habe" ? 2 : 0 }) == "ichgabe")
+    // Foreign words: shared and unknown ones are no evidence; out of time it abstains, and no
+    // lookup starts after the deadline, the lowercase one included.
+    let lexicon: [String: Set<String>] = ["de": ["ich", "so"], "en": ["this", "so"]]
+    func foreign(_ before: String, _ language: String) -> Bool {
+      KeyboardCorrectionRules.hasForeignWords(before: before, language: language, codes: ["de", "en"],
+                                              knows: { lexicon[$1]?.contains($0) == true })
+    }
+    check("foreign words", foreign("ich ", "en") && foreign("this ich ", "en") && !foreign("ich ", "de")
+      && !foreign("so ", "en") && !foreign("zzzz ", "en") && !foreign("", "en") && foreign("Ich ", "en"))
+    for stopAfter in 0...3 {
+      var calls = 0
+      let result = KeyboardCorrectionRules.hasForeignWords(
+        before: "Zzzz ", language: "en", codes: ["de", "en"], shouldStop: { calls >= stopAfter },
+        knows: { _, _ in calls += 1; return false })
+      check("foreign-word scan stops at the deadline (\(stopAfter))", calls == min(stopAfter, 4)
+        && result == (stopAfter < 4))
+    }
+    check("two-letter words ignore context", KeyboardCorrectionRules.replacement(
+      for: "mi", suggestions: ["im"], contextBonus: { _ in 9 }) == "im")
+  }
+
   static func main() {
     let provider = StubProvider()
     let document = UUID()
@@ -978,6 +1216,8 @@ private enum KeyboardAutocorrectionTests {
         words: ["Mädchen"], letters: KeyboardCorrectionLanguage.letters(of: [german])))
     check("german selection corrects umlaut word", germanEdit?.replacement == "Mädchen")
     userDictionaryChecks(document: document)
+    frequencyAndContractionChecks(document: document)
+    contextChecks()
     if failed > 0 {
       print("Keyboard autocorrection: \(failed) of \(count) checks failed")
       exit(1)

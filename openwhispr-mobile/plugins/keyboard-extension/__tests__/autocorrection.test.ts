@@ -66,3 +66,53 @@ test("the app offers exactly the keyboard's languages, with the same default and
   expect(rules).toContain('static let defaultSelection = [german, english]');
   expect(rules).toContain(`static let maxSelected = ${MAX_KEYBOARD_AUTOCORRECTION_LANGUAGES}`);
 });
+
+test('contractions take the field apostrophe, and the frequency lists stay out of the keyboard', () => {
+  const controller = fs.readFileSync(path.join(ios, 'KeyboardViewController.swift'), 'utf8');
+  const provider = fs.readFileSync(path.join(ios, 'TextCheckerCorrectionProvider.swift'), 'utf8');
+  expect(controller).toContain('delimiter: delimiter, straightApostrophe: !usesSmartQuotes)');
+  // The lists are wired for the benchmark only until a measurement with Apple's UITextChecker
+  // shows they help (AUTOCORRECTION.md): the keyboard builds its provider without them.
+  expect(controller).toContain(
+    'TextCheckerCorrectionProvider(languages: languages, contextModels: contextModels)',
+  );
+  expect(controller).not.toContain('frequencyLists');
+  // Rules that ask whether a word is common at all never read the lists.
+  expect(provider).toContain('completionRank(of: word) == nil');
+  expect(provider.match(/splitRank: \{ self\.completionRank\(of: \$0\) \}/g)).toHaveLength(3);
+});
+
+test('the benchmark fixtures are test data only', () => {
+  const bundled = fs.readdirSync(ios);
+  expect(bundled.some((name) => name.endsWith('.tsv'))).toBe(false);
+  // The word-pair files are the only data the keyboard ships; the frequency lists aren't.
+  expect(bundled.filter((name) => name.endsWith('.bin')).sort()).toEqual([
+    'KeyboardContext-de.bin',
+    'KeyboardContext-en.bin',
+  ]);
+  for (const language of ['de', 'en']) {
+    const fixture = fs.readFileSync(
+      path.join(__dirname, `../tests/benchmark/libreoffice-${language}.tsv`),
+      'utf8',
+    );
+    expect(fixture).toContain('Mozilla Public License 2.0');
+    expect(
+      fixture.split('\n').filter((line) => line && !line.startsWith('#')).length,
+    ).toBeGreaterThan(200);
+  }
+});
+
+test('the keyboard reads word pairs from its own bundle, for the selected languages', () => {
+  const controller = fs.readFileSync(path.join(ios, 'KeyboardViewController.swift'), 'utf8');
+  expect(controller).toContain('KeyboardContextModel(contentsOf:');
+  expect(controller).toContain('Bundle(for: KeyboardViewController.self)');
+  expect(controller).toContain('contextModels: contextModels');
+  // Only the context files; the frequency lists stay off.
+  expect(controller).not.toContain('frequencyLists');
+  for (const language of ['de', 'en']) {
+    const bytes = fs.readFileSync(path.join(ios, `KeyboardContext-${language}.bin`));
+    expect(bytes.subarray(0, 4).toString('ascii')).toBe('OWCX');
+    expect(bytes.subarray(8, 10).toString('ascii')).toBe(language);
+    expect(bytes.length).toBeLessThan(2.5 * 1024 * 1024);
+  }
+});
