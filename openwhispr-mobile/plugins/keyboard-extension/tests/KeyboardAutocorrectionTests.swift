@@ -786,6 +786,8 @@ private enum KeyboardAutocorrectionTests {
       let variableEdit = state.correction(in: current, provider: StubProvider(words: [replacement]))!
       check("length-changing candidate", variableEdit.replacement == replacement)
       state.didCorrect(variableEdit)
+      check("length-changing undo query", state.undoCandidate(
+        in: context("🙂 " + replacement + " ", document: document))?.original == original)
       let restored = state.takeUndo(in: context("🙂 " + replacement + " ", document: document))
       check("length-changing undo", restored?.original == original)
       check("length-changing undo suppresses recorrection", state.correction(
@@ -890,6 +892,46 @@ private enum KeyboardAutocorrectionTests {
     check("no undo after the window", timed.takeUndo(in: timedCorrected, at: 103.1) == nil)
     check("the window is three seconds", KeyboardAutocorrection.undoWindow == 3)
 
+    // Queries and consumption share eligibility, but queries never discard pending undo.
+    timed.didCorrect(timedEdit, at: 100)
+    check("undo deadline uses the original correction time", timed.undoDeadline == 103)
+    for now in [100.0, 102.9, 103.0, 103.1] {
+      let contexts = [timedCorrected,
+        context("nicht ", after: nil, selection: "", document: document),
+        context(nil, document: document), context("nicht ", selection: "x", document: document),
+        context("nicht ", allowed: false, document: document),
+        context("nicht ", document: UUID()), context("nicht", document: document),
+        context("nicht ", after: "x", document: document)]
+      for current in contexts {
+        let eligible = current.isSafe && current == timedCorrected && now <= 103
+        check("query checks context and inclusive window", (timed.undoCandidate(in: current, at: now) != nil) == eligible)
+        var consumed = timed
+        check("query agrees with takeUndo", (consumed.takeUndo(in: current, at: now) != nil) == eligible)
+        check("takeUndo consumes even on failure", consumed.undoDeadline == nil
+          && consumed.undoCandidate(in: timedCorrected, at: 101) == nil)
+      }
+    }
+    check("successful and failed queries leave undo intact",
+          timed.undoCandidate(in: timedCorrected, at: 101)?.original == "nciht" && timed.undoDeadline == 103)
+    timed.hostWillChange()
+    check("pending host report blocks query", timed.undoCandidate(in: timedCorrected, at: 101) == nil)
+    var blocked = timed
+    check("pending takeUndo consumes", blocked.takeUndo(in: timedCorrected, at: 101) == nil
+      && blocked.undoDeadline == nil)
+    timed.hostDidChange(timedCorrected)
+    check("query did not discard a matching acknowledgement",
+          timed.undoCandidate(in: timedCorrected, at: 102)?.original == "nciht" && timed.undoDeadline == 103)
+    timed.hostDidChange(context("external ", document: document))
+    check("host change invalidates query", timed.undoCandidate(in: timedCorrected, at: 102) == nil)
+    timed.didCorrect(timedEdit, at: 100)
+    timed.manualInsertion("a", in: timedCorrected)
+    check("manual insertion clears query", timed.undoDeadline == nil
+      && timed.undoCandidate(in: timedCorrected.inserting("a"), at: 101) == nil)
+    timed.didCorrect(timedEdit, at: 100)
+    timed.invalidate()
+    check("invalidation clears query", timed.undoDeadline == nil
+      && timed.undoCandidate(in: timedCorrected, at: 101) == nil)
+
     // ? and ! correct like space and stay after the replacement.
     for delimiter in ["?", "!", ".", ","] {
       var (marked, markedContext) = typed("nciht", document: document)
@@ -897,6 +939,7 @@ private enum KeyboardAutocorrectionTests {
       check("\(delimiter) corrects", markedEdit?.replacement == "nicht" && markedEdit?.delimiter == delimiter)
       marked.didCorrect(markedEdit!)
       let markedCorrected = context("nicht" + delimiter, document: document)
+      check("\(delimiter) undo query", marked.undoCandidate(in: markedCorrected)?.original == "nciht")
       check("\(delimiter) undo", marked.takeUndo(in: markedCorrected)?.original == "nciht")
       (marked, markedContext) = typed("nciht", document: document)
       marked.didCorrect(marked.correction(in: markedContext, provider: provider, delimiter: delimiter)!)

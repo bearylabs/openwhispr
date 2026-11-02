@@ -55,6 +55,7 @@ private final class TestTextProxy: NSObject, UITextDocumentProxy {
   var isSecureTextEntry = false
   var autocorrectionType: UITextAutocorrectionType = .default
   var reportsOwnEdits = false
+  var willDelete: (() -> Void)?
   private(set) var inserted = [String]()
 
   func adjustTextPosition(byCharacterOffset offset: Int) {}
@@ -69,6 +70,7 @@ private final class TestTextProxy: NSObject, UITextDocumentProxy {
     }
   }
   func deleteBackward() {
+    willDelete?()
     if reportsOwnEdits { documentContextBeforeInput = documentContextBeforeInput.map { String($0.dropLast()) } }
   }
 }
@@ -174,6 +176,25 @@ private extension KeyboardViewController {
     autocorrectionClock = { base + seconds }
   }
   func touchTestBeginRepeatedDelete() { startDeleteRepeating(); stopDeleteRepeating() }
+  /// Each clock read returns the next value, the last one repeating: time passing during proxy reads.
+  func touchTestSetClockSequence(_ values: [TimeInterval]) {
+    var remaining = values
+    autocorrectionClock = { remaining.count > 1 ? remaining.removeFirst() : remaining[0] }
+  }
+  func touchTestRefreshBackspace() { refreshFieldAwareKeys() }
+  func touchTestBackspacesShowUndo(_ undo: Bool) -> Bool {
+    let image = undo ? CachedImages.undo : CachedImages.deleteLeft
+    return !backspaceButtons.isEmpty && backspaceButtons.allSatisfy {
+      $0.accessibilityLabel == (undo ? "undo autocorrection" : "delete")
+        && $0.image(for: .normal)?.isEqual(image) == true
+    }
+  }
+  var touchTestUndoTimer: Timer? { undoExpiryTimer }
+  var touchTestUndoDeadline: TimeInterval? { scheduledUndoDeadline }
+  var touchTestBackspaces: [KeyButton] { backspaceButtons }
+  func touchTestRebuild() { rebuildKeyboard() }
+  func touchTestTapShift() { handleShiftTapped() }
+  func touchTestTapPage() { handlePageKeyTapped() }
   func touchTestTapMode() { handleModeKeyTapped() }
   func touchTestQuote(_ character: String) -> String? { smartQuoteSubstitution(for: character) }
 }
@@ -516,14 +537,18 @@ private enum KeyboardTouchTests {
       // Never the developer machine's App Group value.
       controller.touchTestSetAutocorrectionSwitch { true }
       controller.touchTestSetAutocorrectionWords { nil }
+      controller.touchTestAdvanceClock(by: 0)
       return controller
     }
     var controller = keyboard()
     controller.touchTestTypeWord("nciht")
     controller.touchTestTapSpace()
     checks.check("manual space corrects", TestEnvironment.proxy.documentContextBeforeInput == "nicht ")
+    checks.check("correction shows undo image and label", controller.touchTestBackspacesShowUndo(true))
     controller.touchTestTapDelete()
     checks.check("immediate backspace restores original", TestEnvironment.proxy.documentContextBeforeInput == "nciht")
+    checks.check("undo clears image, label and timer", controller.touchTestBackspacesShowUndo(false)
+      && controller.touchTestUndoTimer == nil)
     controller.touchTestTapSpace()
     checks.check("undo prevents immediate recorrection", TestEnvironment.proxy.documentContextBeforeInput == "nciht ")
     controller.touchTestTapSpace()
@@ -585,8 +610,18 @@ private enum KeyboardTouchTests {
     controller.touchTestTypeWord("nciht", hostCallbacks: true)
     controller.touchTestTapSpace()
     checks.check("realistic nil boundaries and own callbacks correct", TestEnvironment.proxy.documentContextBeforeInput == "nicht ")
+    let originalDeadline = controller.touchTestUndoDeadline
     controller.textWillChange(nil)
+    checks.check("will-change hides undo", controller.touchTestBackspacesShowUndo(false)
+      && controller.touchTestUndoTimer == nil)
+    controller.touchTestAdvanceClock(by: 1)
     controller.textDidChange(nil)
+    checks.check("matching did-change restores undo without extending it", controller.touchTestBackspacesShowUndo(true)
+      && controller.touchTestUndoDeadline == originalDeadline)
+    controller.selectionWillChange(nil)
+    checks.check("selection will-change hides undo", controller.touchTestBackspacesShowUndo(false))
+    controller.selectionDidChange(nil)
+    checks.check("matching selection report restores undo", controller.touchTestBackspacesShowUndo(true))
     controller.touchTestTapDelete()
     checks.check("own callbacks preserve safe undo", TestEnvironment.proxy.documentContextBeforeInput == "nciht")
 
@@ -632,6 +667,7 @@ private enum KeyboardTouchTests {
     controller.touchTestTypeWord("nciht")
     controller.touchTestTapSpace()
     checks.check("silent host gets only a normal space", TestEnvironment.proxy.inserted == ["n", "c", "i", "h", "t", " "])
+    checks.check("silent host never shows undo", controller.touchTestBackspacesShowUndo(false))
 
     for field in [UIKeyboardType.URL, .emailAddress, .asciiCapable, .numberPad] {
       controller = keyboard()
@@ -653,8 +689,16 @@ private enum KeyboardTouchTests {
     controller = keyboard()
     controller.touchTestTypeWord("nciht")
     controller.touchTestTapSpace()
+    var deleteFaceBeforeDeletion = false
+    TestEnvironment.proxy.willDelete = { [weak controller] in
+      deleteFaceBeforeDeletion = controller?.touchTestBackspacesShowUndo(false) == true
+    }
     controller.touchTestBeginRepeatedDelete()
+    TestEnvironment.proxy.willDelete = nil
+    checks.check("held delete changes face before deleting", deleteFaceBeforeDeletion)
     checks.check("long-press delete does not undo", TestEnvironment.proxy.documentContextBeforeInput == "nicht")
+    checks.check("held delete clears undo image and timer", controller.touchTestBackspacesShowUndo(false)
+      && controller.touchTestUndoTimer == nil)
     // The app's Settings switch, read at each space so a change applies at once.
     var switchedOn = false
     controller = keyboard()
@@ -761,9 +805,81 @@ private enum KeyboardTouchTests {
     controller = keyboard()
     controller.touchTestTypeWord("nciht")
     controller.touchTestTapSpace()
+    let deadline = controller.touchTestUndoDeadline
+    controller.touchTestUndoTimer?.fire()
+    checks.check("early timer preserves undo and its deadline", controller.touchTestBackspacesShowUndo(true)
+      && controller.touchTestUndoDeadline == deadline && controller.touchTestUndoTimer != nil)
     controller.touchTestAdvanceClock(by: KeyboardAutocorrection.undoWindow + 0.5)
+    controller.touchTestUndoTimer?.fire()
+    checks.check("timer alone clears expired undo", controller.touchTestBackspacesShowUndo(false)
+      && controller.touchTestUndoTimer == nil)
     controller.touchTestTapDelete()
     checks.check("late backspace deletes only the space", TestEnvironment.proxy.documentContextBeforeInput == "nicht")
+
+    // The clock runs on while the proxy is read: crossing the deadline during the reads must
+    // not show undo, and the timer counts from after the reads.
+    controller = keyboard()
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    if let slowDeadline = controller.touchTestUndoDeadline {
+      controller.touchTestSetClockSequence([slowDeadline - 0.1, slowDeadline + 0.1])
+      controller.touchTestRefreshBackspace()
+      checks.check("reads crossing the deadline hide undo", controller.touchTestBackspacesShowUndo(false)
+        && controller.touchTestUndoTimer == nil)
+    } else {
+      checks.check("correction sets an undo deadline", false)
+    }
+    controller = keyboard()
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    if let slowDeadline = controller.touchTestUndoDeadline {
+      controller.textWillChange(nil)
+      controller.touchTestSetClockSequence([slowDeadline - 2, slowDeadline - 1])
+      controller.textDidChange(nil)
+      let interval = controller.touchTestUndoTimer.map { $0.fireDate.timeIntervalSinceNow } ?? 0
+      checks.check("timer counts from after the reads", controller.touchTestBackspacesShowUndo(true)
+        && interval > 0.5 && interval <= 1.05)
+    } else {
+      checks.check("correction sets an undo deadline", false)
+    }
+
+    controller = keyboard()
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    controller.touchTestTypeWord("a")
+    checks.check("typing clears undo", controller.touchTestBackspacesShowUndo(false)
+      && controller.touchTestUndoTimer == nil)
+
+    controller = keyboard()
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapSpace()
+    controller.touchTestTapShift()
+    controller.touchTestTapMode()
+    controller.touchTestTapPage()
+    checks.check("non-editing keys and lazy pages preserve undo", controller.touchTestBackspaces.count == 3
+      && controller.touchTestBackspacesShowUndo(true))
+    let oldBackspaces = controller.touchTestBackspaces
+    let rebuildDeadline = controller.touchTestUndoDeadline
+    controller.touchTestRebuild()
+    checks.check("rebuilt backspaces get current undo state", controller.touchTestBackspacesShowUndo(true)
+      && controller.touchTestBackspaces[0] !== oldBackspaces[0]
+      && controller.touchTestUndoDeadline == rebuildDeadline)
+    controller.viewWillDisappear(false)
+    checks.check("disappearance clears undo and timer", controller.touchTestBackspacesShowUndo(false)
+      && controller.touchTestUndoTimer == nil)
+    controller.viewWillAppear(false)
+    checks.check("reopening does not revive undo", controller.touchTestBackspacesShowUndo(false))
+
+    controller = keyboard()
+    controller.touchTestTypeWord("nciht")
+    controller.touchTestTapMode()
+    controller.touchTestTypeWord("?")
+    checks.check("page switch preserves word tracking and punctuation undo", controller.touchTestBackspacesShowUndo(true)
+      && TestEnvironment.proxy.documentContextBeforeInput == "nicht?")
+    TestEnvironment.proxy.documentContextBeforeInput = "external "
+    controller.textDidChange(nil)
+    checks.check("changed host report clears undo", controller.touchTestBackspacesShowUndo(false)
+      && controller.touchTestUndoTimer == nil)
 
     controller = keyboard()
     TestEnvironment.proxy.autocorrectionType = .no

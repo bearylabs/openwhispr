@@ -784,6 +784,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     static let shift = UIImage(systemName: "shift")?.withRenderingMode(.alwaysTemplate)
     static let shiftFill = UIImage(systemName: "shift.fill")?.withRenderingMode(.alwaysTemplate)
     static let capslockFill = UIImage(systemName: "capslock.fill")?.withRenderingMode(.alwaysTemplate)
+    static let deleteLeft = UIImage(systemName: "delete.left")?.withRenderingMode(.alwaysTemplate)
+    static let undo = UIImage(systemName: "arrow.uturn.backward")?.withRenderingMode(.alwaysTemplate)
 
     // Transparent image the size of the animated processing dots, so the button
     // reserves the right space while the real dots are overlaid on top.
@@ -1130,6 +1132,11 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var recordingWaveformBars: [UIView] = []
   private var characterButtons: [KeyButton] = []
   private var shiftButton: KeyButton?
+  private var backspaceButtons: [KeyButton] = []
+  private var appliedBackspaceUndoState: Bool?
+  private var backspaceStateNeedsRefresh = true
+  private var undoExpiryTimer: Timer?
+  private var scheduledUndoDeadline: TimeInterval?
   private var modeButton: KeyButton?
   private var spaceButton: KeyButton?
   private var returnButton: KeyButton?
@@ -1142,7 +1149,16 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var appliedReturnKeyState: ReturnKeyState?
   // Manual typing only; on unless switched off in the app's Settings, and always subject
   // to the host field’s safety gates. The languages picked there are checked together.
-  private var autocorrection = KeyboardAutocorrection()
+  private var autocorrection = KeyboardAutocorrection() {
+    didSet {
+      backspaceStateNeedsRefresh = true
+      // Clear immediately without proxy reads. Eligible undo is checked only after the
+      // action settles, never between the deletions and insertion of a replacement.
+      if isViewLoaded && (autocorrection.undoDeadline == nil || autocorrection.awaitingHostReport) {
+        refreshBackspaceState()
+      }
+    }
+  }
   /// Set only by tests; otherwise the dictionaries follow the app's language selection.
   private var correctionProvider: KeyboardCorrectionProvider?
   private var textCheckerProvider: TextCheckerCorrectionProvider?
@@ -1418,6 +1434,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   deinit {
+    undoExpiryTimer?.invalidate()
     stopDeleteRepeating()
     issueResetTimer?.invalidate()
     waitForTranscriptTimer?.invalidate()
@@ -1511,7 +1528,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   @objc private func handleBackspaceTapped() {
     playKeyClick()
     if let edit = autocorrection.takeUndo(in: correctionContext(), at: autocorrectionClock()),
-       correctionContext() == undoContext(for: edit)
+       canApplyUndo(edit)
     {
       // Remove corrected word AND its delimiter (space, ? or !); restore the original without
       // it. The next space cannot immediately correct it again: takeUndo cleared tracking.
@@ -1608,6 +1625,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     super.selectionDidChange(textInput)
     noteFieldReport()
     autocorrection.hostDidChange(correctionContext())
+    refreshBackspaceState()
   }
 
   private func correctionContext() -> KeyboardCorrectionContext {
@@ -1625,6 +1643,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       allowed: document != nil && ordinaryField && !fieldHidesItsText
         && proxy.isSecureTextEntry != true && proxy.autocorrectionType != .no,
       hasText: proxy.hasText)
+  }
+
+  private func canApplyUndo(_ edit: KeyboardAutocorrection.Edit) -> Bool {
+    correctionContext() == undoContext(for: edit)
   }
 
   private func undoContext(for edit: KeyboardAutocorrection.Edit) -> KeyboardCorrectionContext {
@@ -2577,6 +2599,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func refreshAfterEdit() {
     noteFieldReport()
     refreshReturnKey()
+    refreshBackspaceState()
   }
 
   private func typeText(_ text: String) {
@@ -2827,6 +2850,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     }
 
     characterButtons.removeAll()
+    backspaceButtons.removeAll()
+    appliedBackspaceUndoState = nil
     shortcutButtons.removeAll()
     bottomRowConstraints = BottomRowConstraints()
     appliedBottomRowLayout = nil
@@ -2983,6 +3008,55 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func refreshFieldAwareKeys() {
     refreshReturnKey()
     refreshBottomRow()
+    backspaceStateNeedsRefresh = true
+    refreshBackspaceState()
+  }
+
+  private func refreshBackspaceState() {
+    // Ordinary typing must not add proxy reads, including mid-edit invalidations.
+    guard let deadline = autocorrection.undoDeadline, !autocorrection.awaitingHostReport else {
+      backspaceStateNeedsRefresh = false
+      applyBackspaceUndoState(false)
+      stopUndoExpiryTimer()
+      return
+    }
+    guard backspaceStateNeedsRefresh else { return }
+    backspaceStateNeedsRefresh = false
+    let edit = autocorrection.undoCandidate(in: correctionContext(), at: autocorrectionClock())
+    // Proxy reads take time: sample the clock again after them, so a read that crosses the
+    // deadline can't show undo and the timer isn't scheduled late by the read's duration.
+    let verified = edit.map { canApplyUndo($0) } ?? false
+    let now = autocorrectionClock()
+    let canUndo = verified && now <= deadline
+    applyBackspaceUndoState(canUndo)
+    guard canUndo else { stopUndoExpiryTimer(); return }
+    guard scheduledUndoDeadline != deadline else { return }
+    stopUndoExpiryTimer()
+    scheduledUndoDeadline = deadline
+    // The window is inclusive; an early/exact-deadline firing checks again just after it.
+    let timer = Timer(timeInterval: max(0.001, deadline - now), repeats: false) { [weak self] timer in
+      guard let self, self.undoExpiryTimer === timer else { return }
+      self.stopUndoExpiryTimer()
+      self.backspaceStateNeedsRefresh = true
+      self.refreshBackspaceState()
+    }
+    undoExpiryTimer = timer
+    RunLoop.main.add(timer, forMode: .common)
+  }
+
+  private func applyBackspaceUndoState(_ canUndo: Bool) {
+    guard appliedBackspaceUndoState != canUndo else { return }
+    appliedBackspaceUndoState = canUndo
+    for button in backspaceButtons {
+      button.setImage(canUndo ? CachedImages.undo : CachedImages.deleteLeft, for: .normal)
+      button.accessibilityLabel = canUndo ? "undo autocorrection" : "delete"
+    }
+  }
+
+  private func stopUndoExpiryTimer() {
+    undoExpiryTimer?.invalidate()
+    undoExpiryTimer = nil
+    scheduledUndoDeadline = nil
   }
 
   private var isReturnKeyDisabled: Bool {
@@ -3151,6 +3225,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     let backspace = makeKeyButton(display: nil, imageSystemName: "delete.left", role: .utility)
     backspace.imageOffsetY = metrics.keycaps.edgeGlyphOffset
     backspace.accessibilityLabel = "delete"
+    backspaceButtons.append(backspace)
+    appliedBackspaceUndoState = nil
     backspace.addTarget(self, action: #selector(handleBackspaceTapped), for: .touchUpInside)
     let longPress = UILongPressGestureRecognizer(
       target: self,

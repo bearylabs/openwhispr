@@ -270,7 +270,13 @@ corrected word and its space, `?`, `!`, `.` or `,` (`Edit.delimiter`) and restor
 it; later, backspace is ordinary and deletes that character. Letters typed right after a
 correcting mark are never tracked as a word. Undo needs the same document and an exact, freshly read
 context, and is one-shot; the restored word isn't tracked, so the next space doesn't correct it
-again. Held backspace keeps its normal repeating deletion.
+again. While a tap would undo, every built backspace key shows `arrow.uturn.backward` and
+announces “undo autocorrection”; otherwise it shows `delete.left` and announces “delete”. The
+face matches observable host state: will-change hides undo, and an exact matching did-change
+report can restore it. A one-shot timer ends the indicator at the original deadline, without
+another key press; acknowledgements and layout rebuilds never extend it. Shift and page switches
+preserve undo. Held backspace drops undo and switches to the delete face before its first
+repeated deletion. Tap-time context checks remain authoritative.
 
 Word indexing and deletion use Swift `Character`; only the provider uses UTF-16
 `NSRange(_:in:)` for Apple's API. Public proxy reads can't form an atomic transaction with the
@@ -296,11 +302,13 @@ npm test -- --runInBand
   ordinary pick, long and accented words, and the state machine's edit), language selection, sentence language, scoring,
   key neighbours, generated candidates, respellings, completion prefixes, missing spaces,
   excluded tokens, Unicode, context invalidation, delayed reports, document boundaries,
-  own-change acknowledgements and undo (including the 3-second window). Jest runs it when `swiftc` is available and skips it
+  own-change acknowledgements, non-consuming undo queries and their consistency with consumption
+  (including the inclusive 3-second window). Jest runs it when `swiftc` is available and skips it
   otherwise.
 - `tests/KeyboardTouchTests.swift` (Catalyst): the controller with a stub provider: correction,
   the Settings switch, English, neighbouring-key slips, umlaut respelling, noun capitalisation,
-  long words, missing spaces, undo and its window, recorrection suppression, double space,
+  long words, missing spaces, undo and its window, the undo image/label and timer, host-report
+  hide/restore, rebuilt keys, disappearance, recorrection suppression, double space,
   silent hosts, cursor changes, field guards, transcript exclusion, held delete, and the app's
   dictionary (a protected word, a typo to the user's or a shared word and its undo, the
   dictionary's case and its undo, the user's word over the system's).

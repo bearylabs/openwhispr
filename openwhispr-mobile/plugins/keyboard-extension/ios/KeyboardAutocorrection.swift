@@ -962,6 +962,7 @@ struct KeyboardAutocorrection {
   /// How long backspace undoes a correction; after that it is an ordinary backspace.
   static let undoWindow: TimeInterval = 3
   var hasTrackedWord: Bool { expected != nil && !word.isEmpty }
+  var undoDeadline: TimeInterval? { undo == nil ? nil : undoTime + Self.undoWindow }
 
   mutating func invalidate() {
     expected = nil
@@ -981,8 +982,12 @@ struct KeyboardAutocorrection {
     awaitingHostReport = false
   }
 
+  private func matchesExpectedContext(_ context: KeyboardCorrectionContext) -> Bool {
+    !awaitingHostReport && context.isSafe && expected == context
+  }
+
   mutating func reconcile(_ context: KeyboardCorrectionContext) {
-    guard !awaitingHostReport, context.isSafe, expected == context else { invalidate(); return }
+    guard matchesExpectedContext(context) else { invalidate(); return }
   }
 
   /// Called before a manual character insert, not for shortcuts, dictation or agent output.
@@ -1035,12 +1040,18 @@ struct KeyboardAutocorrection {
     undoTime = now
   }
 
+  /// A non-consuming query; a pending host report blocks undo even if the read still matches.
+  func undoCandidate(in context: KeyboardCorrectionContext,
+                     at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Edit? {
+    guard matchesExpectedContext(context), now - undoTime <= Self.undoWindow else { return nil }
+    return undo
+  }
+
   /// Consumed even on failure. After undo, the restored word is deliberately not tracked.
   /// Only within `undoWindow` seconds of the correction; later backspace deletes normally.
   mutating func takeUndo(in context: KeyboardCorrectionContext,
                          at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Edit? {
-    reconcile(context)
-    let edit = now - undoTime <= Self.undoWindow ? undo : nil
+    let edit = undoCandidate(in: context, at: now)
     invalidate()
     return edit
   }
